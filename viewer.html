@@ -409,7 +409,8 @@ function seedExpanded(node) {
 }
 
 function load(data, name) {
-  if (!data || (data.kind !== "scan" && data.kind !== "compare")) throw new Error("That file is not a disk-space-analysis report.");
+  if (data && data.kind !== "scan" && (data.kind === "compare" || (data.before && data.after))) data.kind = "compare";
+  if (!data || (data.kind !== "scan" && data.kind !== "compare")) throw new Error("That file is not a disk-space-analysis scan or compare report.");
   report = data;
   document.getElementById("notice").classList.add("hide");
   if (name) document.title = "disk-space-analysis - " + name;
@@ -461,7 +462,7 @@ document.getElementById("file").addEventListener("change", function (event) {
   if (!file) return;
   var reader = new FileReader();
   reader.onload = function () {
-    try { load(JSON.parse(String(reader.result)), file.name); }
+    try { load(JSON.parse(String(reader.result).replace(/^\uFEFF/, "")), file.name); }
     catch (error) {
       var notice = document.getElementById("notice");
       notice.textContent = error instanceof Error ? error.message : "Could not read that report.";
@@ -478,10 +479,10 @@ document.getElementById("file").addEventListener("change", function (event) {
 
 const embedded = document.getElementById("disk-space-analysis-embed");
 if (embedded && embedded.textContent && embedded.textContent.trim() && embedded.textContent.trim() !== "null") {
-  try { load(JSON.parse(embedded.textContent), "latest.html"); }
+  try { load(JSON.parse(embedded.textContent.replace(/^\uFEFF/, "")), "latest.html"); }
   catch (error) {
     const notice = document.getElementById("notice");
-    notice.textContent = "Embedded report could not be read.";
+    notice.textContent = error instanceof Error ? error.message : "Embedded report could not be read.";
     notice.classList.remove("hide");
     render();
   }

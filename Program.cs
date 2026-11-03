@@ -411,7 +411,7 @@ int Compare(Dictionary<string, List<string>> opts)
     var jsonPath = Path.Combine(outDir, "compare.json");
     var htmlPath = Path.Combine(outDir, "compare.html");
     File.WriteAllText(jsonPath, json, new UTF8Encoding(false));
-    File.WriteAllText(htmlPath, BuildOfflineHtml(json), new UTF8Encoding(true));
+    File.WriteAllText(htmlPath, BuildCompareHtml(report), new UTF8Encoding(true));
     WriteChangeCsv(Path.Combine(outDir, "grew.csv"), report.Grew);
     WriteChangeCsv(Path.Combine(outDir, "shrunk.csv"), report.Shrunk);
     WriteChangeCsv(Path.Combine(outDir, "added.csv"), report.Added);
@@ -873,11 +873,82 @@ string LoadViewerTemplate()
 {
     var utf8 = new UTF8Encoding(false);
     var beside = Path.Combine(AppContext.BaseDirectory, "viewer.html");
-    if (File.Exists(beside)) return File.ReadAllText(beside, utf8);
+    if (File.Exists(beside))
+    {
+        var sidecar = File.ReadAllText(beside, utf8);
+        if (sidecar.Contains("function renderCompare", StringComparison.Ordinal)) return sidecar;
+    }
     using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("disk-space-analysis.viewer.html");
     if (stream == null) return "";
     using var reader = new StreamReader(stream, utf8);
     return reader.ReadToEnd();
+}
+
+string BuildCompareHtml(CompareReport report)
+{
+    var delta = report.After.LogicalBytes - report.Before.LogicalBytes;
+    var sb = new StringBuilder();
+    sb.Append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>disk-space-analysis compare</title><style>");
+    sb.Append(":root{--bg:#10120e;--surface:#1a1d17;--surface2:#23281f;--line:#34392e;--fg:#ebe7dc;--muted:#a39e91;--faint:#746f64;--danger:#d4654a}");
+    sb.Append("*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 Segoe UI,sans-serif}.wrap{max-width:80rem;margin:0 auto;padding:16px}");
+    sb.Append(".kicker{font-family:Consolas,monospace;font-size:12px;letter-spacing:.04em;color:#e0a23a;margin:0}h1{font-size:22px;font-weight:500;margin:2px 0 16px}");
+    sb.Append(".stats{display:grid;grid-template-columns:1fr;gap:8px}@media(min-width:800px){.stats{grid-template-columns:repeat(3,minmax(0,1fr))}}");
+    sb.Append(".stat{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:12px;min-width:0}.stat b{display:block;margin-top:4px;font-family:Consolas,monospace;font-size:18px;font-weight:500}.stat span,.hint{color:var(--faint);font-size:12px}.hint{color:var(--muted)}");
+    sb.Append(".chg{margin-top:22px}.chg h2{font-size:16px;font-weight:500;margin:0 0 10px}.row{display:flex;justify-content:space-between;gap:12px}.path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}");
+    sb.Append(".mono{font-family:Consolas,monospace}.up{color:var(--danger)}.down{color:#8aa56e}.bar{height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;margin-top:4px}.bar i{display:block;height:100%}.bar i.up{background:var(--danger)}.bar i.down{background:#8aa56e}");
+    sb.Append("</style></head><body><div class=\"wrap\"><p class=\"kicker\">DISK-SPACE-ANALYSIS</p><h1>Disk space analysis</h1><div class=\"stats\">");
+    Card(sb, "Earlier", FormatBytes(report.Before.LogicalBytes), SideHint(report.Before));
+    Card(sb, "Later", FormatBytes(report.After.LogicalBytes), SideHint(report.After));
+    Card(sb, "Net change", (delta > 0 ? "+" : "") + FormatBytes(delta), delta >= 0 ? "Volume grew" : "Volume shrank");
+    sb.Append("</div>");
+    ChangeSection(sb, "Grew", report.Grew, true);
+    ChangeSection(sb, "Shrank", report.Shrunk, false);
+    ChangeSection(sb, "Added", report.Added, true);
+    ChangeSection(sb, "Removed", report.Removed, false);
+    sb.Append("</div></body></html>");
+    return sb.ToString();
+}
+
+void Card(StringBuilder sb, string label, string value, string hint)
+{
+    sb.Append("<div class=\"stat\"><span>").Append(Html(label)).Append("</span><b>").Append(Html(value)).Append("</b><div class=\"hint\">").Append(Html(hint)).Append("</div></div>");
+}
+
+void ChangeSection(StringBuilder sb, string title, List<ChangeRow> rows, bool grew)
+{
+    sb.Append("<section class=\"chg\"><h2>").Append(Html(title)).Append("</h2>");
+    if (rows.Count == 0)
+    {
+        sb.Append("<p class=\"hint\">None.</p></section>");
+        return;
+    }
+    var max = rows.Max(row => Math.Abs(row.DeltaBytes));
+    if (max < 1) max = 1;
+    var tone = grew ? "up" : "down";
+    foreach (var row in rows)
+    {
+        var width = Math.Max(2, Math.Abs(row.DeltaBytes) * 100 / max);
+        var signed = row.DeltaBytes > 0 ? "+" + FormatBytes(row.DeltaBytes) : FormatBytes(row.DeltaBytes);
+        sb.Append("<div style=\"margin-bottom:14px\"><div class=\"row\"><span class=\"path\" title=\"").Append(Html(row.Path)).Append("\">").Append(Html(row.Path));
+        sb.Append("</span><span class=\"mono ").Append(tone).Append("\">").Append(Html(signed)).Append("</span></div><div class=\"bar\"><i class=\"").Append(tone).Append("\" style=\"width:").Append(width.ToString(CultureInfo.InvariantCulture)).Append("%\"></i></div>");
+        sb.Append("<div class=\"hint mono\">").Append(Html(FormatBytes(row.BeforeBytes))).Append(" &#8594; ").Append(Html(FormatBytes(row.AfterBytes))).Append("</div></div>");
+    }
+    sb.Append("</section>");
+}
+
+string SideHint(CompareSide side)
+{
+    var when = side.ScannedAt ?? "";
+    if (when.Length >= 10) when = when.Substring(0, 10);
+    if (string.IsNullOrEmpty(side.Label)) return when;
+    if (string.IsNullOrEmpty(when)) return side.Label;
+    return side.Label + " | " + when;
+}
+
+string Html(string text)
+{
+    if (string.IsNullOrEmpty(text)) return "";
+    return text.Replace("&", "\u0026amp;", StringComparison.Ordinal).Replace("<", "\u0026lt;", StringComparison.Ordinal).Replace(">", "\u0026gt;", StringComparison.Ordinal).Replace("\"", "\u0026quot;", StringComparison.Ordinal);
 }
 
 List<string> ExpandPaths(List<string> args)
