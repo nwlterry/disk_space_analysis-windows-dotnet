@@ -60,8 +60,8 @@
       <p class="lead">Same job as Tree Size, offline. Open a scan JSON, or use the report embedded in this file.</p>
     </div>
     <div class="row">
-      <button class="btn" id="open" type="button">Open report</button>
-      <input id="file" type="file" accept="application/json,.json" hidden>
+      <label class="btn" for="file">Open report</label>
+      <input id="file" type="file" accept="application/json,.json" style="position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden">
     </div>
   </div>
   <p id="notice" class="err hide"></p>
@@ -115,7 +115,13 @@ function crumbs(node, path, acc) {
   return null;
 }
 function esc(text) {
-  return String(text ?? "").replace(/[&<>"']/g, (ch) => ({ "&":"&","<":"<",">":">","\"":""","'":"&#39;" }[ch]));
+  return String(text == null ? "" : text).replace(/[&<>"']/g, function (ch) {
+    if (ch === "&") return "&" + "amp;";
+    if (ch === "<") return "&" + "lt;";
+    if (ch === ">") return "&" + "gt;";
+    if (ch === '"') return "&" + "quot;";
+    return "&" + "#39;";
+  });
 }
 
 function layout(items, box, scale, out) {
@@ -295,18 +301,26 @@ document.getElementById("app").addEventListener("click", (event) => {
   if (event.target.id === "logical") { mode = "logical"; render(); }
   if (event.target.id === "allocated" && report && report.summary.allocatedCollected) { mode = "allocated"; render(); }
 });
-document.getElementById("open").onclick = () => document.getElementById("file").click();
-document.getElementById("file").onchange = async (event) => {
-  const file = event.target.files && event.target.files[0];
+document.getElementById("file").addEventListener("change", function (event) {
+  var file = event.target.files && event.target.files[0];
   event.target.value = "";
   if (!file) return;
-  try { load(JSON.parse(await file.text()), file.name); }
-  catch (error) {
-    const notice = document.getElementById("notice");
-    notice.textContent = error instanceof Error ? error.message : "Could not read that report.";
+  var reader = new FileReader();
+  reader.onload = function () {
+    try { load(JSON.parse(String(reader.result)), file.name); }
+    catch (error) {
+      var notice = document.getElementById("notice");
+      notice.textContent = error instanceof Error ? error.message : "Could not read that report.";
+      notice.classList.remove("hide");
+    }
+  };
+  reader.onerror = function () {
+    var notice = document.getElementById("notice");
+    notice.textContent = "Could not read that report.";
     notice.classList.remove("hide");
-  }
-};
+  };
+  reader.readAsText(file);
+});
 
 const embedded = document.getElementById("sizetree-embed");
 if (embedded && embedded.textContent && embedded.textContent.trim() && embedded.textContent.trim() !== "null") {
