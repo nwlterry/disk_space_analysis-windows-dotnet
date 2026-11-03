@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SizeTree</title>
+<style>
+  :root {
+    --bg:#10120e; --surface:#1a1d17; --surface2:#23281f; --line:#34392e;
+    --fg:#ebe7dc; --muted:#a39e91; --faint:#746f64; --accent:#e0a23a; --ink:#14160f; --danger:#d4654a;
+    --m0:#e0a23a; --m1:#8aa56e; --m2:#d4654a; --m3:#c9842a; --m4:#5f7d52; --m5:#a34b38;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 "Segoe UI", sans-serif; }
+  button, input { font:inherit; color:inherit; }
+  button { cursor:pointer; }
+  .wrap { max-width:80rem; margin:0 auto; padding:16px; }
+  .kicker { font-family:Consolas, monospace; font-size:12px; letter-spacing:.04em; color:var(--accent); margin:0; }
+  h1 { font-size:22px; font-weight:500; margin:2px 0 6px; }
+  .lead { color:var(--muted); margin:0; max-width:42rem; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .spread { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; align-items:flex-start; }
+  .btn { height:44px; border-radius:6px; border:1px solid var(--line); background:var(--surface); padding:0 12px; }
+  .btn.on, .tab.on { background:var(--accent); color:var(--ink); border-color:var(--accent); }
+  .stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:16px; }
+  @media (min-width:900px) { .stats { grid-template-columns:repeat(4,minmax(0,1fr)); } }
+  .stat { border:1px solid var(--line); background:var(--surface); border-radius:8px; padding:12px; min-width:0; }
+  .stat b { display:block; margin-top:4px; font-family:Consolas,monospace; font-size:18px; font-weight:500; }
+  .stat span, .hint, .meta { color:var(--faint); font-size:12px; }
+  .hint { color:var(--muted); }
+  .crumb { background:transparent; border:0; padding:4px 8px; border-radius:6px; color:var(--muted); }
+  .crumb.on { background:var(--surface2); color:var(--fg); }
+  .tabs { display:flex; gap:8px; overflow:auto; margin:12px 0; }
+  .tab { height:40px; flex:0 0 auto; border:0; border-radius:6px; background:var(--surface); color:var(--muted); padding:0 12px; }
+  .panel { border:1px solid var(--line); background:var(--surface); border-radius:8px; padding:12px; min-height:24rem; }
+  .map { position:relative; height:32rem; background:var(--bg); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .cell { position:absolute; border:0; padding:6px; text-align:left; overflow:hidden; color:#14160f; }
+  .cell b, .cell small { display:block; }
+  .cell small { font-family:Consolas,monospace; }
+  .tree button, .list button { display:flex; width:100%; text-align:left; background:transparent; border:0; border-bottom:1px solid var(--line); padding:8px 4px; gap:8px; }
+  .tree button.on { background:var(--surface2); }
+  .mono { font-family:Consolas,monospace; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th button { background:transparent; border:0; color:var(--faint); padding:0; }
+  .bar { height:8px; background:var(--bg); border-radius:99px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--accent); }
+  .hide { display:none; }
+  .paths button { max-width:100%; }
+  input[type="search"] { width:100%; height:40px; margin-top:4px; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:0 10px; }
+  .err { color:var(--danger); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="spread">
+    <div>
+      <p class="kicker">SIZETREE</p>
+      <h1>Disk space analysis</h1>
+      <p class="lead">Same job as Tree Size, offline. Open a scan JSON, or use the report embedded in this file.</p>
+    </div>
+    <div class="row">
+      <button class="btn" id="open" type="button">Open report</button>
+      <input id="file" type="file" accept="application/json,.json" hidden>
+    </div>
+  </div>
+  <p id="notice" class="err hide"></p>
+  <div id="app"></div>
+</div>
+<!--SIZETREE_EMBED-->
+<script>
+const FILLS = ["#e0a23a","#8aa56e","#d4654a","#c9842a","#5f7d52","#a34b38"];
+const TABS = [["map","Map"],["tree","Tree"],["files","Files"],["types","Types"],["age","Age"],["dupes","Dupes"],["errors","Errors"]];
+let report = null;
+let focus = "";
+let mode = "logical";
+let pane = "map";
+let ageOpen = "";
+let query = "";
+
+function bytes(n) {
+  n = Number(n) || 0;
+  const sign = n < 0 ? "-" : "";
+  let v = Math.abs(n), i = 0;
+  const u = ["B","KB","MB","GB","TB","PB"];
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  const d = i === 0 ? 0 : v >= 100 ? 0 : v >= 10 ? 1 : 2;
+  return sign + v.toFixed(d) + " " + u[i];
+}
+function pct(part, total) {
+  if (!total) return "0%";
+  const p = (part / total) * 100;
+  return (p >= 10 ? p.toFixed(0) : p.toFixed(1)) + "%";
+}
+function sizeOf(node) {
+  return mode === "allocated" && report.summary.allocatedCollected ? node.allocatedBytes : node.logicalBytes;
+}
+function find(node, path) {
+  if (!node) return null;
+  if (node.path === path) return node;
+  for (const child of node.children || []) {
+    const hit = find(child, path);
+    if (hit) return hit;
+  }
+  return null;
+}
+function crumbs(node, path, acc) {
+  acc = acc || [];
+  acc.push(node);
+  if (node.path === path) return acc;
+  for (const child of node.children || []) {
+    const hit = crumbs(child, path, acc.slice());
+    if (hit) return hit;
+  }
+  return null;
+}
+function esc(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (ch) => ({ "&":"&","<":"<",">":">","\"":""","'":"&#39;" }[ch]));
+}
+
+function layout(items, box, scale, out) {
+  if (!items.length || box.w <= 0 || box.h <= 0) return;
+  if (items.length === 1) { out.push(Object.assign({}, items[0], box)); return; }
+  const horizontal = box.w >= box.h;
+  const side = horizontal ? box.h : box.w;
+  const row = [];
+  let sum = 0, i = 0;
+  const worst = (r, s) => {
+    if (!r.length || s <= 0 || side <= 0) return Infinity;
+    const thick = (s * scale) / side;
+    let w = 0;
+    for (const item of r) {
+      const len = (item.value * scale) / thick;
+      w = Math.max(w, len / thick, thick / len);
+    }
+    return w;
+  };
+  for (; i < items.length; i++) {
+    const next = row.concat(items[i]);
+    const nextSum = sum + items[i].value;
+    if (!row.length || worst(next, nextSum) <= worst(row, sum)) { row.push(items[i]); sum = nextSum; }
+    else break;
+  }
+  const thick = Math.min((sum * scale) / side, horizontal ? box.w : box.h);
+  let cursor = 0;
+  for (const item of row) {
+    const len = sum ? (item.value / sum) * side : 0;
+    out.push(Object.assign({}, item, horizontal
+      ? { x: box.x, y: box.y + cursor, w: thick, h: len }
+      : { x: box.x + cursor, y: box.y, w: len, h: thick }));
+    cursor += len;
+  }
+  const rest = items.slice(i);
+  if (!rest.length) return;
+  layout(rest, horizontal
+    ? { x: box.x + thick, y: box.y, w: box.w - thick, h: box.h }
+    : { x: box.x, y: box.y + thick, w: box.w, h: box.h - thick }, scale, out);
+}
+
+function mapHtml(node) {
+  const kids = (node.children || []).filter((child) => sizeOf(child) > 0);
+  const items = (kids.length ? kids : [node]).map((child) => ({
+    name: child.name, path: child.path, value: Math.max(sizeOf(child), 1), drill: (child.children || []).length > 0
+  })).sort((a, b) => b.value - a.value);
+  const total = items.reduce((s, item) => s + item.value, 0);
+  const cells = [];
+  layout(items, { x:0, y:0, w:100, h:100 }, 10000 / total, cells);
+  return '<div class="map">' + cells.map((cell, index) => {
+    const label = cell.w >= 12 && cell.h >= 10
+      ? "<b>" + esc(cell.name) + "</b><small>" + esc(bytes(cell.value)) + "</small>" : "";
+    return '<button class="cell" data-open="' + esc(cell.path) + '" data-drill="' + (cell.drill ? "1" : "0") + '" style="left:' + cell.x + "%;top:" + cell.y + "%;width:" + cell.w + "%;height:" + cell.h + "%;background:" + FILLS[index % FILLS.length] + '">' + label + "</button>";
+  }).join("") + "</div>";
+}
+
+function treeRows(node, depth, html) {
+  const kids = node.children || [];
+  const q = query.trim().toLowerCase();
+  const selfHit = !q || node.path.toLowerCase().indexOf(q) >= 0 || node.name.toLowerCase().indexOf(q) >= 0;
+  let childHtml = "";
+  for (const child of kids) childHtml += treeRows(child, depth + 1, "");
+  if (q && !selfHit && !childHtml) return html;
+  const here = sizeOf(node);
+  return html + '<button type="button" class="' + (node.path === focus ? "on" : "") + '" data-open="' + esc(node.path) + '" data-drill="1" style="padding-left:' + (8 + depth * 14) + 'px"><span class="mono">' + esc(node.name) + '</span><span style="margin-left:auto" class="hint">' + esc(bytes(here)) + "</span></button>" + childHtml;
+}
+
+function filesHtml() {
+  const rows = (report.largestFiles || []).slice().sort((a, b) => b.logicalBytes - a.logicalBytes);
+  return "<table><tr><th>File</th><th>Size</th><th>Modified</th></tr>" + rows.map((file) =>
+    "<tr><td><div>" + esc(file.name) + '</div><div class="hint mono">' + esc(file.path) + "</div></td><td class='mono'>" + esc(bytes(mode === "allocated" && report.summary.allocatedCollected ? file.allocatedBytes : file.logicalBytes)) + "</td><td class='hint'>" + esc(file.modifiedUtc || "") + "</td></tr>"
+  ).join("") + "</table>";
+}
+
+function typesHtml() {
+  const rows = report.extensions || [];
+  const max = rows.reduce((m, row) => Math.max(m, row.logicalBytes), 1);
+  return rows.map((row) =>
+    "<div style='margin:0 0 10px'><div class='row' style='justify-content:space-between'><span class='mono'>" + esc(row.extension) + "</span><span class='hint'>" + esc(bytes(row.logicalBytes)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (row.logicalBytes / max) * 100) + "%'></i></div></div>"
+  ).join("") || "<p class='hint'>No extension totals.</p>";
+}
+
+function ageHtml() {
+  const rows = report.ages || [];
+  const max = rows.reduce((m, row) => Math.max(m, mode === "allocated" && report.summary.allocatedCollected ? row.allocatedBytes : row.logicalBytes), 1);
+  return rows.map((row) => {
+    const value = mode === "allocated" && report.summary.allocatedCollected ? row.allocatedBytes : row.logicalBytes;
+    const open = ageOpen === row.bucket;
+    const files = row.files || [];
+    return "<button type='button' class='btn' data-age='" + esc(row.bucket) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span>" + esc(row.bucket) + "</span><span class='hint'>" + esc(bytes(value)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
+      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? files.map((file) => "<div class='hint mono'>" + esc(bytes(file.logicalBytes)) + "  " + esc(file.path) + "</div>").join("") : "<p class='hint'>No file list for this age. Re-scan with the current SizeTree tools.</p>") + "</div>" : "");
+  }).join("");
+}
+
+function dupesHtml() {
+  const rows = report.duplicates || [];
+  if (!rows.length) return "<p class='hint'>No duplicate groups. Re-scan with -Duplicates or --duplicates.</p>";
+  return rows.map((row) => "<div style='margin-bottom:12px'><b>" + esc(bytes(row.wasteBytes)) + " waste</b> <span class='hint'>" + row.count + " files · " + esc(row.match) + "</span><div class='hint mono'>" + (row.paths || []).map(esc).join("<br>") + "</div></div>").join("");
+}
+
+function errorsHtml() {
+  const rows = report.errors || [];
+  if (!rows.length) return "<p class='hint'>No access errors or skipped links were recorded.</p>";
+  return rows.map((row) => "<div style='margin-bottom:8px'><div class='mono'>" + esc(row.path) + "</div><div class='err'>" + esc(row.message) + "</div></div>").join("");
+}
+
+function render() {
+  const app = document.getElementById("app");
+  if (!report) {
+    app.innerHTML = "<p class='hint' style='margin-top:16px'>No report yet. Open latest.json from a SizeTree scan.</p>";
+    return;
+  }
+  const node = find(report.tree, focus) || report.tree;
+  focus = node.path;
+  const trail = crumbs(report.tree, focus) || [report.tree];
+  const roots = report.roots && report.roots.length ? report.roots : [report.root];
+  const volume = mode === "allocated" && report.summary.allocatedCollected ? report.summary.allocatedBytes : report.summary.logicalBytes;
+  const here = sizeOf(node);
+  let body = "";
+  if (pane === "map") {
+    body = "<div class='row' style='justify-content:space-between;margin-bottom:8px'><b>" + esc(node.name) + "</b><span class='hint mono'>" + esc(bytes(here)) + " · " + esc(pct(here, volume)) + "</span></div>" + mapHtml(node) + "<p class='hint'>" + esc(bytes(here)) + " in " + esc(node.name) + ". Click a block to open that folder.</p>";
+  } else if (pane === "tree") {
+    body = "<label class='hint'>Folders<input id='filter' type='search' placeholder='Filter path' value='" + esc(query) + "'></label><div class='tree'>" + treeRows(report.tree, 0, "") + "</div>";
+  } else if (pane === "files") body = filesHtml();
+  else if (pane === "types") body = typesHtml();
+  else if (pane === "age") body = ageHtml();
+  else if (pane === "dupes") body = dupesHtml();
+  else body = errorsHtml();
+
+  const pathButtons = roots.length > 1
+    ? "<div class='row paths' style='margin-bottom:8px'>" + roots.map((path) => "<button type='button' class='btn mono' data-root='" + esc(path) + "'>" + esc(path) + "</button>").join("") + "</div>"
+    : "";
+  app.innerHTML =
+    "<div class='stats'>" +
+    stat("Logical size", bytes(report.summary.logicalBytes), (report.host || "") ) +
+    stat(report.summary.allocatedCollected ? "Allocated" : "Allocated not scanned", report.summary.allocatedCollected ? bytes(report.summary.allocatedBytes) : "—", report.summary.allocatedCollected ? "On-disk allocation" : "Re-scan with -AllocatedSize") +
+    stat("Files", Number(report.summary.fileCount || 0).toLocaleString(), Number(report.summary.folderCount || 0).toLocaleString() + " folders") +
+    stat("Duplicate waste", bytes(report.summary.duplicateWasteBytes), (report.summary.duplicateGroups || 0) + " groups · " + (report.summary.deniedCount || 0) + " denied") +
+    "</div><div style='margin-top:16px'>" + pathButtons +
+    "<div class='row'><div class='row' style='flex:1'>" + trail.map((crumb, index) => (index ? "<span class='hint'>/</span>" : "") + "<button type='button' class='crumb" + (crumb.path === node.path ? " on" : "") + "' data-open='" + esc(crumb.path) + "' data-drill='1'>" + esc(crumb.name) + "</button>").join("") + "</div>" +
+    "<button type='button' id='logical' class='btn" + (mode === "logical" ? " on" : "") + "'>Logical</button><button type='button' id='allocated' class='btn" + (mode === "allocated" ? " on" : "") + "'" + (report.summary.allocatedCollected ? "" : " disabled") + ">Allocated</button>" +
+    "<span class='meta mono'>" + esc(report.scannedAt || "") + " · " + esc(report.tool || "") + " " + esc(report.version || "") + "</span></div>" +
+    "<div class='tabs'>" + TABS.map(([id, label]) => "<button type='button' class='tab" + (pane === id ? " on" : "") + "' data-pane='" + id + "'>" + label + (id === "errors" && (report.errors || []).length ? " " + report.errors.length : "") + "</button>").join("") + "</div>" +
+    "<section class='panel'>" + body + "</section></div>";
+}
+function stat(label, value, hint) {
+  return "<div class='stat'><span>" + esc(label) + "</span><b>" + esc(value) + "</b><div class='hint'>" + esc(hint) + "</div></div>";
+}
+
+function load(data, name) {
+  if (!data || data.kind !== "scan" || !data.tree) throw new Error("That file is not a SizeTree scan report.");
+  report = data;
+  if (!report.roots || !report.roots.length) report.roots = report.root ? [report.root] : [];
+  focus = report.tree.path;
+  pane = "map";
+  ageOpen = "";
+  query = "";
+  document.getElementById("notice").classList.add("hide");
+  if (name) document.title = "SizeTree · " + name;
+  render();
+}
+
+document.getElementById("app").addEventListener("click", (event) => {
+  const paneBtn = event.target.closest("[data-pane]");
+  if (paneBtn) { pane = paneBtn.getAttribute("data-pane"); render(); return; }
+  const ageBtn = event.target.closest("[data-age]");
+  if (ageBtn) { const bucket = ageBtn.getAttribute("data-age"); ageOpen = ageOpen === bucket ? "" : bucket; render(); return; }
+  const rootBtn = event.target.closest("[data-root]");
+  if (rootBtn) { focus = rootBtn.getAttribute("data-root"); pane = "map"; render(); return; }
+  const openBtn = event.target.closest("[data-open]");
+  if (openBtn && openBtn.getAttribute("data-drill") !== "0") { focus = openBtn.getAttribute("data-open"); pane = "map"; render(); }
+});
+document.getElementById("app").addEventListener("input", (event) => {
+  if (event.target.id === "filter") { query = event.target.value; render(); const box = document.getElementById("filter"); if (box) { box.focus(); box.setSelectionRange(query.length, query.length); } }
+});
+document.getElementById("app").addEventListener("click", (event) => {
+  if (event.target.id === "logical") { mode = "logical"; render(); }
+  if (event.target.id === "allocated" && report && report.summary.allocatedCollected) { mode = "allocated"; render(); }
+});
+document.getElementById("open").onclick = () => document.getElementById("file").click();
+document.getElementById("file").onchange = async (event) => {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = "";
+  if (!file) return;
+  try { load(JSON.parse(await file.text()), file.name); }
+  catch (error) {
+    const notice = document.getElementById("notice");
+    notice.textContent = error instanceof Error ? error.message : "Could not read that report.";
+    notice.classList.remove("hide");
+  }
+};
+
+const embedded = document.getElementById("sizetree-embed");
+if (embedded && embedded.textContent && embedded.textContent.trim() && embedded.textContent.trim() !== "null") {
+  try { load(JSON.parse(embedded.textContent), "latest.html"); }
+  catch (error) {
+    const notice = document.getElementById("notice");
+    notice.textContent = "Embedded report could not be read.";
+    notice.classList.remove("hide");
+    render();
+  }
+} else render();
+</script>
+</body>
+</html>

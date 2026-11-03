@@ -10,4 +10,12 @@
     <Version>1.0.0</Version>
     <Description>Disk space analyzer for Windows Server. Writes the SizeTree report format.</Description>
   </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="viewer.html" Condition="Exists('viewer.html')">
+      <LogicalName>SizeTree.viewer.html</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\viewer.html" Condition="!Exists('viewer.html')">
+      <LogicalName>SizeTree.viewer.html</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 </Project>

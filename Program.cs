@@ -75,7 +75,8 @@ bool Flag(Dictionary<string, List<string>> opts, string key) =>
 
 int Scan(Dictionary<string, List<string>> opts)
 {
-    var path = Opt(opts, "path") ?? throw new InvalidOperationException("scan requires --path <directory>");
+    if (!opts.TryGetValue("path", out var pathArgs) || pathArgs.Count == 0)
+        throw new InvalidOperationException("scan requires --path <directory>. Repeat --path for more than one.");
     var outDir = Opt(opts, "out") ?? "SizeTreeReports";
     var topFiles = Math.Max(1, ParseInt(Opt(opts, "top-files"), 200));
     var topFolders = Math.Max(1, ParseInt(Opt(opts, "top-folders"), 500));
@@ -89,23 +90,13 @@ int Scan(Dictionary<string, List<string>> opts)
     var minDup = ParseLong(Opt(opts, "min-dup-bytes"), 50L * 1024 * 1024);
     if (minDup < 256 * 1024) minDup = 256 * 1024;
     var exclude = SplitPatterns(opts);
-
-    var fullRoot = Path.GetFullPath(path);
-    var rootInfo = new DirectoryInfo(fullRoot);
-    if (!rootInfo.Exists)
-    {
-        Console.Error.WriteLine("Path not found or not a directory: " + fullRoot);
-        return 2;
-    }
-
     var state = new ScanState(topFiles, topFolders, duplicates, minDup);
-    var rootName = fullRoot.Length <= 3 ? fullRoot : rootInfo.Name;
-    var root = new FolderNode { Name = rootName, Path = fullRoot, Depth = 0 };
     var started = System.Diagnostics.Stopwatch.StartNew();
-    if (!quiet) Console.WriteLine("Scanning " + fullRoot);
 
+    void Walk(FolderNode walkRoot, DirectoryInfo walkInfo)
+    {
     var stack = new Stack<(FolderNode Node, DirectoryInfo Info)>();
-    stack.Push((root, rootInfo));
+    stack.Push((walkRoot, walkInfo));
     var enumOptions = new EnumerationOptions
     {
         RecurseSubdirectories = false,
@@ -206,6 +197,50 @@ int Scan(Dictionary<string, List<string>> opts)
             state.AddError(node.Path, ex.Message, reparse: false);
         }
     }
+    }
+
+    var requested = ExpandPaths(pathArgs);
+    if (requested.Count == 0)
+        throw new InvalidOperationException("scan requires --path <directory>. Repeat --path for more than one.");
+    var scanned = new List<FolderNode>();
+    var fullPaths = new List<string>();
+    foreach (var requestedPath in requested)
+    {
+        string fullRoot;
+        try { fullRoot = Path.GetFullPath(requestedPath); }
+        catch
+        {
+            Console.Error.WriteLine("Path is not valid: " + requestedPath);
+            return 2;
+        }
+        var rootInfo = new DirectoryInfo(fullRoot.Length >= 240 ? ToLongPath(fullRoot) : fullRoot);
+        if (!rootInfo.Exists)
+        {
+            Console.Error.WriteLine("Path not found or not a directory: " + fullRoot);
+            return 2;
+        }
+        var rootName = fullRoot.Length <= 3 ? fullRoot : new DirectoryInfo(fullRoot).Name;
+        var scannedRoot = new FolderNode { Name = rootName, Path = fullRoot, Depth = 0 };
+        if (!quiet) Console.WriteLine("Scanning " + fullRoot);
+        Walk(scannedRoot, rootInfo);
+        scanned.Add(scannedRoot);
+        fullPaths.Add(fullRoot);
+    }
+
+    FolderNode root;
+    if (scanned.Count == 1)
+    {
+        root = scanned[0];
+    }
+    else
+    {
+        root = new FolderNode { Name = "Scanned paths", Path = string.Join(" | ", fullPaths), Depth = 0 };
+        foreach (var child in scanned)
+        {
+            ShiftDepth(child, 1);
+            root.Children.Add(child);
+        }
+    }
 
     if (!quiet) Console.WriteLine("Rolling up folder sizes...");
     Rollup(root);
@@ -224,7 +259,8 @@ int Scan(Dictionary<string, List<string>> opts)
     {
         ScannedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
         Host = Environment.MachineName,
-        Root = fullRoot,
+        Root = root.Path,
+        Roots = fullPaths,
         ElapsedMs = (long)started.Elapsed.TotalMilliseconds,
         Summary = new Summary
         {
@@ -238,7 +274,7 @@ int Scan(Dictionary<string, List<string>> opts)
             DuplicateWasteBytes = dupRows.Sum(row => row.WasteBytes),
             AllocatedCollected = allocated
         },
-        Tree = ExportNode(root, 0, exportDepth, maxChildren),
+        Tree = ExportNode(root, 0, scanned.Count > 1 ? exportDepth + 1 : exportDepth, maxChildren),
         LargestFolders = state.TopFolders().OrderByDescending(row => row.LogicalBytes).ToList(),
         LargestFiles = state.TopFiles().OrderByDescending(row => row.LogicalBytes).ToList(),
         Extensions = state.Extensions.OrderByDescending(row => row.LogicalBytes).ToList(),
@@ -276,7 +312,7 @@ int Scan(Dictionary<string, List<string>> opts)
     WriteSimpleCsv(Path.Combine(outDir, "latest-errors.csv"),
         ["path", "message"],
         report.Errors.Select(row => new[] { row.Path, row.Message }));
-    var html = BuildHtml(report);
+    var html = BuildOfflineHtml(json);
     File.WriteAllText(Path.Combine(outDir, "latest.html"), html, new UTF8Encoding(false));
     File.WriteAllText(Path.Combine(outDir, $"sizetree-{stamp}.html"), html, new UTF8Encoding(false));
 
@@ -748,36 +784,43 @@ List<Dictionary<string, string>> ReadCsv(string file)
     return result;
 }
 
-string BuildHtml(ScanReport report)
+string BuildOfflineHtml(string json)
 {
-    var sb = new StringBuilder();
-    sb.Append("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>SizeTree report</title>");
-    sb.Append("<style>body{font-family:Segoe UI,sans-serif;margin:24px;color:#1c1914;background:#f6f3ec}table{border-collapse:collapse;width:100%;margin:12px 0 28px}td,th{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;font-size:13px}th{font-size:12px;color:#666}h1{font-size:22px}.mono{font-family:Consolas,monospace}</style></head><body>");
-    sb.Append("<h1>SizeTree report</h1><p class=\"mono\">").Append(Html(report.Root)).Append(" on ").Append(Html(report.Host)).Append("</p>");
-    sb.Append("<p>Logical ").Append(FormatBytes(report.Summary.LogicalBytes))
-        .Append(" · Allocated ").Append(FormatBytes(report.Summary.AllocatedBytes))
-        .Append(" · Files ").Append(report.Summary.FileCount.ToString("n0", CultureInfo.InvariantCulture))
-        .Append(" · Duplicate waste ").Append(FormatBytes(report.Summary.DuplicateWasteBytes)).Append("</p>");
-    sb.Append("<h2>Largest folders</h2><table><tr><th>Path</th><th>Logical</th><th>Files</th></tr>");
-    foreach (var row in report.LargestFolders.Take(40))
-        sb.Append("<tr><td class=\"mono\">").Append(Html(row.Path)).Append("</td><td>").Append(FormatBytes(row.LogicalBytes)).Append("</td><td>").Append(row.FileCount).Append("</td></tr>");
-    sb.Append("</table><h2>Largest files</h2><table><tr><th>Path</th><th>Logical</th><th>Modified</th></tr>");
-    foreach (var row in report.LargestFiles.Take(40))
-        sb.Append("<tr><td class=\"mono\">").Append(Html(row.Path)).Append("</td><td>").Append(FormatBytes(row.LogicalBytes)).Append("</td><td>").Append(Html(row.ModifiedUtc)).Append("</td></tr>");
-    sb.Append("</table><h2>Largest files by age</h2><table><tr><th>Age</th><th>Path</th><th>Logical</th><th>Modified</th></tr>");
-    foreach (var age in report.Ages)
-    {
-        foreach (var row in age.Files.Take(15))
-            sb.Append("<tr><td>").Append(Html(age.Bucket)).Append("</td><td class=\"mono\">").Append(Html(row.Path)).Append("</td><td>").Append(FormatBytes(row.LogicalBytes)).Append("</td><td>").Append(Html(row.ModifiedUtc)).Append("</td></tr>");
-    }
-    sb.Append("</table></body></html>");
-    return sb.ToString();
+    var template = LoadViewerTemplate();
+    var safe = json.Replace("<", "\\u003c", StringComparison.Ordinal).Replace(">", "\\u003e", StringComparison.Ordinal).Replace("&", "\\u0026", StringComparison.Ordinal);
+    var embed = "<script id=\"sizetree-embed\" type=\"application/json\">" + safe + "</script>";
+    if (template.Contains("<!--SIZETREE_EMBED-->", StringComparison.Ordinal))
+        return template.Replace("<!--SIZETREE_EMBED-->", embed, StringComparison.Ordinal);
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>SizeTree</title></head><body><p>Place viewer.html next to SizeTree.exe.</p>" + embed + "</body></html>";
 }
 
-string Html(string? text)
+string LoadViewerTemplate()
 {
-    var value = text ?? "";
-    return value.Replace("&", "&" + "amp;").Replace("<", "&" + "lt;").Replace(">", "&" + "gt;");
+    var beside = Path.Combine(AppContext.BaseDirectory, "viewer.html");
+    if (File.Exists(beside)) return File.ReadAllText(beside);
+    using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("SizeTree.viewer.html");
+    if (stream == null) return "";
+    using var reader = new StreamReader(stream);
+    return reader.ReadToEnd();
+}
+
+List<string> ExpandPaths(List<string> args)
+{
+    var paths = new List<string>();
+    foreach (var arg in args)
+    {
+        foreach (var part in arg.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (part.Length > 0) paths.Add(part);
+        }
+    }
+    return paths;
+}
+
+void ShiftDepth(FolderNode node, int delta)
+{
+    node.Depth += delta;
+    foreach (var child in node.Children) ShiftDepth(child, delta);
 }
 
 string FormatBytes(long number)
@@ -796,11 +839,11 @@ void PrintHelp()
     Console.WriteLine("""
         SizeTree 1.0 — disk space analysis for Windows Server
 
-          SizeTree scan --path D:\ --out C:\SizeTreeReports --duplicates --hash --allocated
+          SizeTree scan --path D:\ --path E:\Data --out C:\SizeTreeReports --duplicates --hash --allocated
           SizeTree compare --before older-folders.csv --after latest-folders.csv --out C:\SizeTreeReports\compare
 
         scan
-          --path <dir>            Folder, volume, or UNC path
+          --path <dir>            Folder, volume, or UNC path. Repeat for more than one. Semicolons also split a value.
           --out <dir>             Report folder (default SizeTreeReports)
           --top-files <n>         Largest files kept (default 200)
           --top-folders <n>       Largest folders kept in JSON (default 500)
@@ -814,7 +857,7 @@ void PrintHelp()
           --exclude <pattern>     Name or wildcard. Repeat, or separate with semicolons
           --quiet
 
-        compare reads folders.csv or a scan JSON. Open latest.json or compare.json in the SizeTree viewer.
+        compare reads folders.csv or a scan JSON. Open latest.json in the SizeTree viewer, or double-click latest.html for the same screen offline.
 
         Publish:
           dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o publish
@@ -1007,6 +1050,7 @@ sealed class ScanReport
     public string ScannedAt { get; set; } = "";
     public string Host { get; set; } = "";
     public string Root { get; set; } = "";
+    public List<string> Roots { get; set; } = [];
     public long ElapsedMs { get; set; }
     public Summary Summary { get; set; } = new();
     public FolderDto Tree { get; set; } = new();
