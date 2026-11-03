@@ -303,13 +303,12 @@ int Scan(Dictionary<string, List<string>> opts)
     var json = JsonSerializer.Serialize(report, jsonOptions);
     File.WriteAllText(Path.Combine(outDir, "latest.json"), json, new UTF8Encoding(false));
     File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.json"), json, new UTF8Encoding(false));
-    WriteFoldersCsv(Path.Combine(outDir, "latest-folders.csv"), root);
-    WriteFoldersCsv(Path.Combine(outDir, $"disk-space-analysis-{stamp}-folders.csv"), root);
-    WriteFilesCsv(Path.Combine(outDir, "latest-files.csv"), report.LargestFiles);
-    WriteSimpleCsv(Path.Combine(outDir, "latest-extensions.csv"),
+    WritePair("folders.csv", path => WriteFoldersCsv(path, root));
+    WritePair("files.csv", path => WriteFilesCsv(path, report.LargestFiles));
+    WritePair("extensions.csv", path => WriteSimpleCsv(path,
         ["extension", "fileCount", "logicalBytes", "allocatedBytes"],
-        report.Extensions.Select(row => new[] { row.Extension, row.FileCount.ToString(CultureInfo.InvariantCulture), row.LogicalBytes.ToString(CultureInfo.InvariantCulture), row.AllocatedBytes.ToString(CultureInfo.InvariantCulture) }));
-    WriteSimpleCsv(Path.Combine(outDir, "latest-extension-files.csv"),
+        report.Extensions.Select(row => new[] { row.Extension, row.FileCount.ToString(CultureInfo.InvariantCulture), row.LogicalBytes.ToString(CultureInfo.InvariantCulture), row.AllocatedBytes.ToString(CultureInfo.InvariantCulture) })));
+    WritePair("extension-files.csv", path => WriteSimpleCsv(path,
         ["extension", "path", "name", "logicalBytes", "allocatedBytes", "modifiedUtc"],
         report.Extensions.SelectMany(ext => ext.Files.Select(file => new[]
         {
@@ -317,11 +316,11 @@ int Scan(Dictionary<string, List<string>> opts)
             file.LogicalBytes.ToString(CultureInfo.InvariantCulture),
             file.AllocatedBytes.ToString(CultureInfo.InvariantCulture),
             file.ModifiedUtc
-        })));
-    WriteSimpleCsv(Path.Combine(outDir, "latest-ages.csv"),
+        }))));
+    WritePair("ages.csv", path => WriteSimpleCsv(path,
         ["bucket", "fileCount", "logicalBytes", "allocatedBytes"],
-        report.Ages.Select(row => new[] { row.Bucket, row.FileCount.ToString(CultureInfo.InvariantCulture), row.LogicalBytes.ToString(CultureInfo.InvariantCulture), row.AllocatedBytes.ToString(CultureInfo.InvariantCulture) }));
-    WriteSimpleCsv(Path.Combine(outDir, "latest-age-files.csv"),
+        report.Ages.Select(row => new[] { row.Bucket, row.FileCount.ToString(CultureInfo.InvariantCulture), row.LogicalBytes.ToString(CultureInfo.InvariantCulture), row.AllocatedBytes.ToString(CultureInfo.InvariantCulture) })));
+    WritePair("age-files.csv", path => WriteSimpleCsv(path,
         ["bucket", "path", "name", "extension", "logicalBytes", "allocatedBytes", "modifiedUtc"],
         report.Ages.SelectMany(age => age.Files.Select(file => new[]
         {
@@ -329,13 +328,13 @@ int Scan(Dictionary<string, List<string>> opts)
             file.LogicalBytes.ToString(CultureInfo.InvariantCulture),
             file.AllocatedBytes.ToString(CultureInfo.InvariantCulture),
             file.ModifiedUtc
-        })));
-    WriteSimpleCsv(Path.Combine(outDir, "latest-duplicates.csv"),
+        }))));
+    WritePair("duplicates.csv", path => WriteSimpleCsv(path,
         ["match", "hash", "logicalBytes", "count", "wasteBytes", "paths"],
-        report.Duplicates.Select(row => new[] { row.Match, row.Hash ?? "", row.LogicalBytes.ToString(CultureInfo.InvariantCulture), row.Count.ToString(CultureInfo.InvariantCulture), row.WasteBytes.ToString(CultureInfo.InvariantCulture), string.Join("|", row.Paths) }));
-    WriteSimpleCsv(Path.Combine(outDir, "latest-errors.csv"),
+        report.Duplicates.Select(row => new[] { row.Match, row.Hash ?? "", row.LogicalBytes.ToString(CultureInfo.InvariantCulture), row.Count.ToString(CultureInfo.InvariantCulture), row.WasteBytes.ToString(CultureInfo.InvariantCulture), string.Join("|", row.Paths) })));
+    WritePair("errors.csv", path => WriteSimpleCsv(path,
         ["path", "message"],
-        report.Errors.Select(row => new[] { row.Path, row.Message }));
+        report.Errors.Select(row => new[] { row.Path, row.Message })));
     var html = BuildOfflineHtml(json);
     File.WriteAllText(Path.Combine(outDir, "latest.html"), html, new UTF8Encoding(true));
     File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.html"), html, new UTF8Encoding(true));
@@ -343,6 +342,12 @@ int Scan(Dictionary<string, List<string>> opts)
     log.Info($"Done in {started.Elapsed.TotalSeconds:n1}s. Logical {FormatBytes(root.LogicalBytes)}. Files {root.FileCount:n0}. Denied {state.Denied}. Reports in {Path.GetFullPath(outDir)}. Log {Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log")}");
     if (depth > 0) log.Info($"Depth limit {depth} was set. Totals exclude anything deeper.");
     return 0;
+
+    void WritePair(string leaf, Action<string> write)
+    {
+        write(Path.Combine(outDir, "latest-" + leaf));
+        write(Path.Combine(outDir, $"disk-space-analysis-{stamp}-{leaf}"));
+    }
     }
     catch (Exception ex)
     {
@@ -407,18 +412,24 @@ int Compare(Dictionary<string, List<string>> opts)
     };
 
     Directory.CreateDirectory(outDir);
+    var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
     var json = JsonSerializer.Serialize(report, jsonOptions);
-    var jsonPath = Path.Combine(outDir, "compare.json");
-    var htmlPath = Path.Combine(outDir, "compare.html");
-    File.WriteAllText(jsonPath, json, new UTF8Encoding(false));
-    File.WriteAllText(htmlPath, BuildCompareHtml(report), new UTF8Encoding(true));
-    WriteChangeCsv(Path.Combine(outDir, "grew.csv"), report.Grew);
-    WriteChangeCsv(Path.Combine(outDir, "shrunk.csv"), report.Shrunk);
-    WriteChangeCsv(Path.Combine(outDir, "added.csv"), report.Added);
-    WriteChangeCsv(Path.Combine(outDir, "removed.csv"), report.Removed);
+    void Save(string leaf, Action<string> write)
+    {
+        write(Path.Combine(outDir, leaf));
+        write(Path.Combine(outDir, $"disk-space-analysis-{stamp}-{leaf}"));
+    }
+    var html = BuildCompareHtml(report);
+    Save("compare.json", path => File.WriteAllText(path, json, new UTF8Encoding(false)));
+    Save("compare.html", path => File.WriteAllText(path, html, new UTF8Encoding(true)));
+    Save("grew.csv", path => WriteChangeCsv(path, report.Grew));
+    Save("shrunk.csv", path => WriteChangeCsv(path, report.Shrunk));
+    Save("added.csv", path => WriteChangeCsv(path, report.Added));
+    Save("removed.csv", path => WriteChangeCsv(path, report.Removed));
     var net = after.RootBytes - before.RootBytes;
+    var htmlPath = Path.Combine(outDir, $"disk-space-analysis-{stamp}-compare.html");
     log.Info($"Net {net} bytes. Grew {report.Grew.Count}, shrunk {report.Shrunk.Count}, added {report.Added.Count}, removed {report.Removed.Count}.");
-    log.Info("Wrote " + Path.GetFullPath(htmlPath) + " and " + Path.GetFullPath(jsonPath) + ". Log " + Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log"));
+    log.Info("Wrote " + Path.GetFullPath(htmlPath) + ". Log " + Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log"));
     return 0;
     }
     catch (Exception ex)
@@ -987,7 +998,7 @@ void PrintHelp()
         disk-space-analysis 1.0 — disk space analysis for Windows Server
 
           disk-space-analysis scan --path D:\ --path E:\Data --out C:\disk-space-analysis-reports --duplicates --hash --allocated
-          disk-space-analysis compare --before older-folders.csv --after latest-folders.csv --out C:\disk-space-analysis-reports\compare
+          disk-space-analysis compare --before disk-space-analysis-20261006-020000-folders.csv --after disk-space-analysis-20261103-090000-folders.csv --out C:\disk-space-analysis-reports\compare
 
         scan
           --path <dir>            Folder, volume, or UNC path. Repeat for more than one. Semicolons also split a value.

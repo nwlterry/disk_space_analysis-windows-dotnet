@@ -6,7 +6,7 @@ Scan one or more folders, volumes, or UNC paths on Windows Server 2016 and later
 
 ```powershell
 .\disk-space-analysis.exe scan --path D:\ --path E:\Data --out C:\disk-space-analysis-reports --duplicates --hash --allocated
-.\disk-space-analysis.exe compare --before C:\disk-space-analysis-reports\older-folders.csv --after C:\disk-space-analysis-reports\latest-folders.csv --out C:\disk-space-analysis-reports\compare
+.\disk-space-analysis.exe compare --before C:\disk-space-analysis-reports\disk-space-analysis-20261006-020000-folders.csv --after C:\disk-space-analysis-reports\disk-space-analysis-20261103-090000-folders.csv --out C:\disk-space-analysis-reports\compare
 ```
 
 Repeat `--path` for each directory, or separate paths in one value with a semicolon. One path still works. Several paths are drawn as one map, with a button for each path.
