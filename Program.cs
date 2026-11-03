@@ -398,8 +398,8 @@ int Compare(Dictionary<string, List<string>> opts)
     var report = new CompareReport
     {
         GeneratedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
-        Before = new CompareSide { Label = Path.GetFullPath(beforePath), LogicalBytes = before.RootBytes },
-        After = new CompareSide { Label = Path.GetFullPath(afterPath), LogicalBytes = after.RootBytes },
+        Before = Side(before, beforePath),
+        After = Side(after, afterPath),
         Grew = Top(grew, top),
         Shrunk = Top(shrunk, top),
         Added = Top(added, top),
@@ -407,15 +407,18 @@ int Compare(Dictionary<string, List<string>> opts)
     };
 
     Directory.CreateDirectory(outDir);
+    var json = JsonSerializer.Serialize(report, jsonOptions);
     var jsonPath = Path.Combine(outDir, "compare.json");
-    File.WriteAllText(jsonPath, JsonSerializer.Serialize(report, jsonOptions), new UTF8Encoding(false));
+    var htmlPath = Path.Combine(outDir, "compare.html");
+    File.WriteAllText(jsonPath, json, new UTF8Encoding(false));
+    File.WriteAllText(htmlPath, BuildOfflineHtml(json), new UTF8Encoding(true));
     WriteChangeCsv(Path.Combine(outDir, "grew.csv"), report.Grew);
     WriteChangeCsv(Path.Combine(outDir, "shrunk.csv"), report.Shrunk);
     WriteChangeCsv(Path.Combine(outDir, "added.csv"), report.Added);
     WriteChangeCsv(Path.Combine(outDir, "removed.csv"), report.Removed);
     var net = after.RootBytes - before.RootBytes;
     log.Info($"Net {net} bytes. Grew {report.Grew.Count}, shrunk {report.Shrunk.Count}, added {report.Added.Count}, removed {report.Removed.Count}.");
-    log.Info("Wrote " + Path.GetFullPath(jsonPath) + ". Log " + Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log"));
+    log.Info("Wrote " + Path.GetFullPath(htmlPath) + " and " + Path.GetFullPath(jsonPath) + ". Log " + Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log"));
     return 0;
     }
     catch (Exception ex)
@@ -423,6 +426,27 @@ int Compare(Dictionary<string, List<string>> opts)
         log.Error(ex.Message);
         return 1;
     }
+}
+
+CompareSide Side(FolderMap map, string file)
+{
+    var when = map.ScannedAt;
+    if (string.IsNullOrEmpty(when)) when = StampFromName(file);
+    if (when.Length >= 10) when = when.Substring(0, 10);
+    return new CompareSide
+    {
+        Label = string.IsNullOrEmpty(map.RootPath) ? Path.GetFullPath(file) : map.RootPath,
+        ScannedAt = when,
+        LogicalBytes = map.RootBytes
+    };
+}
+
+string StampFromName(string file)
+{
+    var name = Path.GetFileName(file);
+    var match = Regex.Match(name, @"(\d{4})(\d{2})(\d{2})");
+    if (!match.Success) return File.GetLastWriteTimeUtc(file).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    return match.Groups[1].Value + "-" + match.Groups[2].Value + "-" + match.Groups[3].Value;
 }
 
 FolderMap LoadFolderMap(string file)
@@ -443,7 +467,11 @@ FolderMap LoadCsvMap(string file)
         var depth = row.TryGetValue("depth", out var depthRaw) && int.TryParse(depthRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var depthParsed) ? depthParsed : 0;
         row.TryGetValue("name", out var name);
         map.Rows[path] = new FolderMeasure { Name = name ?? path, LogicalBytes = logical };
-        if (depth == 0 && logical >= map.RootBytes) map.RootBytes = logical;
+        if (depth == 0 && logical >= map.RootBytes)
+        {
+            map.RootBytes = logical;
+            map.RootPath = path;
+        }
     }
     return map;
 }
@@ -452,9 +480,14 @@ FolderMap LoadJsonMap(string file)
 {
     using var doc = JsonDocument.Parse(File.ReadAllText(file));
     var map = new FolderMap();
+    if (doc.RootElement.TryGetProperty("scannedAt", out var at))
+        map.ScannedAt = at.GetString() ?? "";
+    if (doc.RootElement.TryGetProperty("root", out var root) && root.ValueKind == JsonValueKind.String)
+        map.RootPath = root.GetString() ?? "";
     if (!doc.RootElement.TryGetProperty("tree", out var tree))
         throw new InvalidOperationException("JSON report has no tree: " + file);
     WalkJson(tree, map, isRoot: true);
+    if (string.IsNullOrEmpty(map.ScannedAt)) map.ScannedAt = StampFromName(file);
     return map;
 }
 
@@ -467,7 +500,11 @@ void WalkJson(JsonElement node, FolderMap map, bool isRoot)
     if (!string.IsNullOrEmpty(path))
     {
         map.Rows[path] = new FolderMeasure { Name = name, LogicalBytes = logical };
-        if (isRoot) map.RootBytes = logical;
+        if (isRoot)
+        {
+            map.RootBytes = logical;
+            if (string.IsNullOrEmpty(map.RootPath)) map.RootPath = path;
+        }
     }
     if (!node.TryGetProperty("children", out var children)) return;
     foreach (var child in children.EnumerateArray())
@@ -1099,6 +1136,8 @@ sealed class FolderMap
 {
     public Dictionary<string, FolderMeasure> Rows { get; } = new(StringComparer.OrdinalIgnoreCase);
     public long RootBytes { get; set; }
+    public string RootPath { get; set; } = "";
+    public string ScannedAt { get; set; } = "";
 }
 
 sealed class FolderMeasure
@@ -1223,6 +1262,7 @@ sealed class CompareReport
 sealed class CompareSide
 {
     public string Label { get; set; } = "";
+    public string ScannedAt { get; set; } = "";
     public long LogicalBytes { get; set; }
 }
 

@@ -52,6 +52,16 @@
   th button { background:transparent; border:0; color:var(--faint); padding:0; }
   .bar { height:8px; background:var(--bg); border-radius:99px; overflow:hidden; }
   .bar i { display:block; height:100%; background:var(--accent); }
+  .stats.cols3 { grid-template-columns:1fr; }
+  @media (min-width:800px) { .stats.cols3 { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+  .chg { margin-top:22px; }
+  .chg h2 { font-size:16px; font-weight:500; margin:0 0 10px; }
+  .path { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .delta.up { color:var(--danger); }
+  .delta.down { color:#8aa56e; }
+  .bar.track { background:var(--surface2); }
+  .bar i.up { background:var(--danger); }
+  .bar i.down { background:#8aa56e; }
   .hide { display:none; }
   .paths button { max-width:100%; }
   input[type="search"] { width:100%; height:40px; margin-top:4px; background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:0 10px; }
@@ -341,6 +351,51 @@ function render() {
     "<div class='tabs'>" + TABS.map(([id, label]) => "<button type='button' class='tab" + (pane === id ? " on" : "") + "' data-pane='" + id + "'>" + label + (id === "errors" && (report.errors || []).length ? " " + report.errors.length : "") + "</button>").join("") + "</div>" +
     "<section class='panel'>" + body + "</section></div>";
 }
+function signedBytes(n) {
+  n = Number(n) || 0;
+  if (n > 0) return "+" + bytes(n);
+  return bytes(n);
+}
+function sideHint(side) {
+  side = side || {};
+  const label = side.label || "";
+  const when = String(side.scannedAt || "").slice(0, 10);
+  if (label && when) return label + " | " + when;
+  return label || when;
+}
+function changeRows(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === "object" && value.path) return [value];
+  return [];
+}
+function changeSection(title, rows, grew) {
+  const list = changeRows(rows);
+  const max = list.reduce((m, row) => Math.max(m, Math.abs(Number(row.deltaBytes) || 0)), 1);
+  const tone = grew ? "up" : "down";
+  const body = list.length ? list.map((row) => {
+    const delta = Number(row.deltaBytes) || 0;
+    const width = Math.max(2, (Math.abs(delta) / max) * 100);
+    return "<div style='margin-bottom:14px'><div class='row' style='justify-content:space-between;gap:12px'><span class='path' title='" + esc(row.path) + "'>" + esc(row.path) + "</span><span class='mono delta " + tone + "'>" + esc(signedBytes(delta)) + "</span></div><div class='bar track'><i class='" + tone + "' style='width:" + width + "%'></i></div><div class='hint mono'>" + esc(bytes(row.beforeBytes)) + " &#8594; " + esc(bytes(row.afterBytes)) + "</div></div>";
+  }).join("") : "<p class='hint'>None.</p>";
+  return "<section class='chg'><h2>" + esc(title) + "</h2>" + body + "</section>";
+}
+function renderCompare() {
+  const before = report.before || {};
+  const after = report.after || {};
+  const delta = Number(after.logicalBytes || 0) - Number(before.logicalBytes || 0);
+  document.getElementById("app").innerHTML =
+    "<div class='stats cols3'>" +
+    stat("Earlier", bytes(before.logicalBytes), sideHint(before)) +
+    stat("Later", bytes(after.logicalBytes), sideHint(after)) +
+    stat("Net change", signedBytes(delta), delta >= 0 ? "Volume grew" : "Volume shrank") +
+    "</div>" +
+    changeSection("Grew", report.grew, true) +
+    changeSection("Shrank", report.shrunk, false) +
+    changeSection("Added", report.added, true) +
+    changeSection("Removed", report.removed, false);
+}
+
 function stat(label, value, hint) {
   return "<div class='stat'><span>" + esc(label) + "</span><b>" + esc(value) + "</b><div class='hint'>" + esc(hint) + "</div></div>";
 }
@@ -354,8 +409,11 @@ function seedExpanded(node) {
 }
 
 function load(data, name) {
-  if (!data || data.kind !== "scan" || !data.tree) throw new Error("That file is not a disk-space-analysis scan report.");
+  if (!data || (data.kind !== "scan" && data.kind !== "compare")) throw new Error("That file is not a disk-space-analysis report.");
   report = data;
+  document.getElementById("notice").classList.add("hide");
+  if (name) document.title = "disk-space-analysis - " + name;
+  if (data.kind === "compare") { renderCompare(); return; }
   if (!report.roots || !report.roots.length) report.roots = report.root ? [report.root] : [];
   focus = report.tree.path;
   pane = "map";
@@ -363,8 +421,6 @@ function load(data, name) {
   typeOpen = "";
   query = "";
   seedExpanded(report.tree);
-  document.getElementById("notice").classList.add("hide");
-  if (name) document.title = "disk-space-analysis - " + name;
   render();
 }
 
@@ -397,7 +453,7 @@ document.getElementById("app").addEventListener("input", (event) => {
 });
 document.getElementById("app").addEventListener("click", (event) => {
   if (event.target.id === "logical") { mode = "logical"; render(); }
-  if (event.target.id === "allocated" && report && report.summary.allocatedCollected) { mode = "allocated"; render(); }
+  if (event.target.id === "allocated" && report && report.summary && report.summary.allocatedCollected) { mode = "allocated"; render(); }
 });
 document.getElementById("file").addEventListener("change", function (event) {
   var file = event.target.files && event.target.files[0];
