@@ -152,6 +152,7 @@ int Scan(Dictionary<string, List<string>> opts)
                         };
                         state.ConsiderFile(row);
                         if (bucket.Length > 0) state.ConsiderAgeFile(bucket, row);
+                        state.ConsiderExtFile(ext, row);
                     }
                     if (duplicates && logical >= minDup)
                         state.AddDup(logical, display);
@@ -277,7 +278,14 @@ int Scan(Dictionary<string, List<string>> opts)
         Tree = ExportNode(root, 0, scanned.Count > 1 ? exportDepth + 1 : exportDepth, maxChildren),
         LargestFolders = state.TopFolders().OrderByDescending(row => row.LogicalBytes).ToList(),
         LargestFiles = state.TopFiles().OrderByDescending(row => row.LogicalBytes).ToList(),
-        Extensions = state.Extensions.OrderByDescending(row => row.LogicalBytes).ToList(),
+        Extensions = state.Extensions
+            .Select(row =>
+            {
+                row.Files = state.TakeExtFiles(row.Extension);
+                return row;
+            })
+            .OrderByDescending(row => row.LogicalBytes)
+            .ToList(),
         Ages = OrderedAges(state),
         Duplicates = dupRows,
         Errors = state.Errors
@@ -294,6 +302,15 @@ int Scan(Dictionary<string, List<string>> opts)
     WriteSimpleCsv(Path.Combine(outDir, "latest-extensions.csv"),
         ["extension", "fileCount", "logicalBytes", "allocatedBytes"],
         report.Extensions.Select(row => new[] { row.Extension, row.FileCount.ToString(CultureInfo.InvariantCulture), row.LogicalBytes.ToString(CultureInfo.InvariantCulture), row.AllocatedBytes.ToString(CultureInfo.InvariantCulture) }));
+    WriteSimpleCsv(Path.Combine(outDir, "latest-extension-files.csv"),
+        ["extension", "path", "name", "logicalBytes", "allocatedBytes", "modifiedUtc"],
+        report.Extensions.SelectMany(ext => ext.Files.Select(file => new[]
+        {
+            ext.Extension, file.Path, file.Name,
+            file.LogicalBytes.ToString(CultureInfo.InvariantCulture),
+            file.AllocatedBytes.ToString(CultureInfo.InvariantCulture),
+            file.ModifiedUtc
+        })));
     WriteSimpleCsv(Path.Combine(outDir, "latest-ages.csv"),
         ["bucket", "fileCount", "logicalBytes", "allocatedBytes"],
         report.Ages.Select(row => new[] { row.Bucket, row.FileCount.ToString(CultureInfo.InvariantCulture), row.LogicalBytes.ToString(CultureInfo.InvariantCulture), row.AllocatedBytes.ToString(CultureInfo.InvariantCulture) }));
@@ -871,7 +888,9 @@ sealed class ScanState
     readonly PriorityQueue<FileRow, long> _files = new();
     readonly PriorityQueue<FolderRow, long> _folders = new();
     readonly Dictionary<string, PriorityQueue<FileRow, long>> _ageFiles = new(StringComparer.Ordinal);
+    readonly Dictionary<string, PriorityQueue<FileRow, long>> _extFiles = new(StringComparer.OrdinalIgnoreCase);
     const int AgeFileCap = 40;
+    const int ExtFileCap = 40;
 
     public ScanState(int topFiles, int topFolders, bool duplicates, long minDup)
     {
@@ -917,6 +936,27 @@ sealed class ScanState
     public List<FileRow> TakeAgeFiles(string bucket)
     {
         if (!_ageFiles.TryGetValue(bucket, out var heap)) return [];
+        var list = new List<FileRow>();
+        while (heap.Count > 0) list.Add(heap.Dequeue());
+        list.Sort((a, b) => b.LogicalBytes.CompareTo(a.LogicalBytes));
+        return list;
+    }
+
+    public void ConsiderExtFile(string extension, FileRow row)
+    {
+        if (!_extFiles.TryGetValue(extension, out var heap))
+            _extFiles[extension] = heap = new PriorityQueue<FileRow, long>();
+        if (heap.Count < ExtFileCap) heap.Enqueue(row, row.LogicalBytes);
+        else if (row.LogicalBytes > heap.Peek().LogicalBytes)
+        {
+            heap.Dequeue();
+            heap.Enqueue(row, row.LogicalBytes);
+        }
+    }
+
+    public List<FileRow> TakeExtFiles(string extension)
+    {
+        if (!_extFiles.TryGetValue(extension, out var heap)) return [];
         var list = new List<FileRow>();
         while (heap.Count > 0) list.Add(heap.Dequeue());
         list.Sort((a, b) => b.LogicalBytes.CompareTo(a.LogicalBytes));
@@ -1112,6 +1152,7 @@ sealed class ExtRow
     public long FileCount { get; set; }
     public long LogicalBytes { get; set; }
     public long AllocatedBytes { get; set; }
+    public List<FileRow> Files { get; set; } = [];
 }
 
 sealed class AgeRow

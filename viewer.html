@@ -76,6 +76,7 @@ let focus = "";
 let mode = "logical";
 let pane = "map";
 let ageOpen = "";
+let typeOpen = "";
 let query = "";
 
 function bytes(n) {
@@ -198,10 +199,18 @@ function filesHtml() {
 
 function typesHtml() {
   const rows = report.extensions || [];
-  const max = rows.reduce((m, row) => Math.max(m, row.logicalBytes), 1);
-  return rows.map((row) =>
-    "<div style='margin:0 0 10px'><div class='row' style='justify-content:space-between'><span class='mono'>" + esc(row.extension) + "</span><span class='hint'>" + esc(bytes(row.logicalBytes)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (row.logicalBytes / max) * 100) + "%'></i></div></div>"
-  ).join("") || "<p class='hint'>No extension totals.</p>";
+  const useAlloc = mode === "allocated" && report.summary.allocatedCollected;
+  const max = rows.reduce((m, row) => Math.max(m, useAlloc ? row.allocatedBytes : row.logicalBytes), 1);
+  return rows.map((row) => {
+    const value = useAlloc ? row.allocatedBytes : row.logicalBytes;
+    const open = typeOpen === row.extension;
+    const listed = (row.files || []).slice();
+    const files = (listed.length ? listed : (report.largestFiles || []).filter((file) => (file.extension || "(none)") === row.extension))
+      .slice()
+      .sort((a, b) => (useAlloc ? b.allocatedBytes - a.allocatedBytes : b.logicalBytes - a.logicalBytes));
+    return "<button type='button' class='btn' data-ext='" + esc(row.extension) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span class='mono'>" + esc(row.extension) + "</span><span class='hint'>" + esc(bytes(value)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
+      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? files.map((file) => "<div class='hint mono'>" + esc(bytes(useAlloc ? file.allocatedBytes : file.logicalBytes)) + "  " + esc(file.path) + "</div>").join("") : "<p class='hint'>No file list for this type. Re-scan with the current SizeTree tools.</p>") + "</div>" : "");
+  }).join("") || "<p class='hint'>No extension totals.</p>";
 }
 
 function ageHtml() {
@@ -278,6 +287,7 @@ function load(data, name) {
   focus = report.tree.path;
   pane = "map";
   ageOpen = "";
+  typeOpen = "";
   query = "";
   document.getElementById("notice").classList.add("hide");
   if (name) document.title = "SizeTree · " + name;
@@ -289,6 +299,8 @@ document.getElementById("app").addEventListener("click", (event) => {
   if (paneBtn) { pane = paneBtn.getAttribute("data-pane"); render(); return; }
   const ageBtn = event.target.closest("[data-age]");
   if (ageBtn) { const bucket = ageBtn.getAttribute("data-age"); ageOpen = ageOpen === bucket ? "" : bucket; render(); return; }
+  const typeBtn = event.target.closest("[data-ext]");
+  if (typeBtn) { const ext = typeBtn.getAttribute("data-ext"); typeOpen = typeOpen === ext ? "" : ext; render(); return; }
   const rootBtn = event.target.closest("[data-root]");
   if (rootBtn) { focus = rootBtn.getAttribute("data-root"); pane = "map"; render(); return; }
   const openBtn = event.target.closest("[data-open]");
