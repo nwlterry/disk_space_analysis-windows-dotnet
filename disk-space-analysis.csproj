@@ -11,6 +11,9 @@
     <Description>Disk space analyzer for Windows Server.</Description>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="System.Diagnostics.EventLog" Version="8.0.1" />
+  </ItemGroup>
+  <ItemGroup>
     <EmbeddedResource Include="viewer.html" Condition="Exists('viewer.html')">
       <LogicalName>disk-space-analysis.viewer.html</LogicalName>
     </EmbeddedResource>

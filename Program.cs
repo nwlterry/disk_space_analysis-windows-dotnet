@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -19,7 +20,8 @@ try
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine(ex.Message);
+    var line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "  " + ex.Message.Replace('\r', ' ').Replace('\n', ' ');
+    Console.Error.WriteLine(line);
     return 1;
 }
 
@@ -87,11 +89,16 @@ int Scan(Dictionary<string, List<string>> opts)
     var hash = Flag(opts, "hash");
     var allocated = Flag(opts, "allocated");
     var quiet = Flag(opts, "quiet");
+    var eventLog = Flag(opts, "event-log");
     var minDup = ParseLong(Opt(opts, "min-dup-bytes"), 50L * 1024 * 1024);
     if (minDup < 256 * 1024) minDup = 256 * 1024;
     var exclude = SplitPatterns(opts);
     var state = new ScanState(topFiles, topFolders, duplicates, minDup);
-    var started = System.Diagnostics.Stopwatch.StartNew();
+    var started = Stopwatch.StartNew();
+    using var log = new RunLog(outDir, quiet, eventLog);
+    try
+    {
+    log.Info("Started scan. Output " + Path.GetFullPath(outDir));
 
     void Walk(FolderNode walkRoot, DirectoryInfo walkInfo)
     {
@@ -113,8 +120,8 @@ int Scan(Dictionary<string, List<string>> opts)
             foreach (var file in info.EnumerateFiles("*", enumOptions))
             {
                 state.FilesSeen++;
-                if (!quiet && state.FilesSeen % 20000 == 0)
-                    Console.WriteLine($"{state.FilesSeen:n0} files  {node.Path}");
+                if (state.FilesSeen % 20000 == 0)
+                    log.Info($"{state.FilesSeen:n0} files  {node.Path}", toEvent: false);
                 try
                 {
                     var display = DisplayPath(file.FullName);
@@ -211,18 +218,18 @@ int Scan(Dictionary<string, List<string>> opts)
         try { fullRoot = Path.GetFullPath(requestedPath); }
         catch
         {
-            Console.Error.WriteLine("Path is not valid: " + requestedPath);
+            log.Error("Path is not valid: " + requestedPath);
             return 2;
         }
         var rootInfo = new DirectoryInfo(fullRoot.Length >= 240 ? ToLongPath(fullRoot) : fullRoot);
         if (!rootInfo.Exists)
         {
-            Console.Error.WriteLine("Path not found or not a directory: " + fullRoot);
+            log.Error("Path not found or not a directory: " + fullRoot);
             return 2;
         }
         var rootName = fullRoot.Length <= 3 ? fullRoot : new DirectoryInfo(fullRoot).Name;
         var scannedRoot = new FolderNode { Name = rootName, Path = fullRoot, Depth = 0 };
-        if (!quiet) Console.WriteLine("Scanning " + fullRoot);
+        log.Info("Scanning " + fullRoot);
         Walk(scannedRoot, rootInfo);
         scanned.Add(scannedRoot);
         fullPaths.Add(fullRoot);
@@ -243,7 +250,7 @@ int Scan(Dictionary<string, List<string>> opts)
         }
     }
 
-    if (!quiet) Console.WriteLine("Rolling up folder sizes...");
+    log.Info("Rolling up folder sizes...");
     Rollup(root);
     var pending = new Stack<FolderNode>();
     pending.Push(root);
@@ -333,12 +340,15 @@ int Scan(Dictionary<string, List<string>> opts)
     File.WriteAllText(Path.Combine(outDir, "latest.html"), html, new UTF8Encoding(false));
     File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.html"), html, new UTF8Encoding(false));
 
-    if (!quiet)
-    {
-        Console.WriteLine($"Done in {started.Elapsed.TotalSeconds:n1}s. Logical {FormatBytes(root.LogicalBytes)}. Files {root.FileCount:n0}. Denied {state.Denied}. Reports in {Path.GetFullPath(outDir)}");
-        if (depth > 0) Console.WriteLine($"Depth limit {depth} was set. Totals exclude anything deeper.");
-    }
+    log.Info($"Done in {started.Elapsed.TotalSeconds:n1}s. Logical {FormatBytes(root.LogicalBytes)}. Files {root.FileCount:n0}. Denied {state.Denied}. Reports in {Path.GetFullPath(outDir)}. Log {Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log")}");
+    if (depth > 0) log.Info($"Depth limit {depth} was set. Totals exclude anything deeper.");
     return 0;
+    }
+    catch (Exception ex)
+    {
+        log.Error(ex.Message);
+        return 1;
+    }
 }
 
 int Compare(Dictionary<string, List<string>> opts)
@@ -348,6 +358,11 @@ int Compare(Dictionary<string, List<string>> opts)
     var outDir = Opt(opts, "out") ?? "disk-space-analysis-compare";
     var top = Math.Max(1, ParseInt(Opt(opts, "top"), 100));
     var minDelta = Math.Max(0, ParseLong(Opt(opts, "min-delta-bytes"), 1024 * 1024));
+    var eventLog = Flag(opts, "event-log");
+    using var log = new RunLog(outDir, quiet: false, eventLog);
+    try
+    {
+    log.Info("Started compare. Output " + Path.GetFullPath(outDir));
 
     var before = LoadFolderMap(beforePath);
     var after = LoadFolderMap(afterPath);
@@ -399,9 +414,15 @@ int Compare(Dictionary<string, List<string>> opts)
     WriteChangeCsv(Path.Combine(outDir, "added.csv"), report.Added);
     WriteChangeCsv(Path.Combine(outDir, "removed.csv"), report.Removed);
     var net = after.RootBytes - before.RootBytes;
-    Console.WriteLine($"Net {net} bytes. Grew {report.Grew.Count}, shrunk {report.Shrunk.Count}, added {report.Added.Count}, removed {report.Removed.Count}.");
-    Console.WriteLine("Wrote " + Path.GetFullPath(jsonPath));
+    log.Info($"Net {net} bytes. Grew {report.Grew.Count}, shrunk {report.Shrunk.Count}, added {report.Added.Count}, removed {report.Removed.Count}.");
+    log.Info("Wrote " + Path.GetFullPath(jsonPath) + ". Log " + Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log"));
     return 0;
+    }
+    catch (Exception ex)
+    {
+        log.Error(ex.Message);
+        return 1;
+    }
 }
 
 FolderMap LoadFolderMap(string file)
@@ -872,9 +893,13 @@ void PrintHelp()
           --min-dup-bytes <n>     Minimum size for duplicate tracking (default 50MB, floor 256KB)
           --allocated             Read NTFS allocated size (slower)
           --exclude <pattern>     Name or wildcard. Repeat, or separate with semicolons
-          --quiet
+          --event-log             Also write the start, errors, and the summary to the Windows Application log
+          --quiet                 Hide console progress. The log file is still written
 
-        compare reads folders.csv or a scan JSON. Open latest.json in the disk-space-analysis viewer, or double-click latest.html for the same screen offline.
+        compare reads folders.csv or a scan JSON. Add --event-log on compare as well.
+        Open latest.json in the disk-space-analysis viewer, or double-click latest.html for the same screen offline.
+        Each run appends disk-space-analysis.log in the report folder. The event source is disk-space-analysis.
+        The first --event-log run must be elevated so Windows can register that source.
 
         Publish:
           dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o publish
@@ -1208,3 +1233,75 @@ sealed class ChangeRow
     public long AfterBytes { get; set; }
     public long DeltaBytes { get; set; }
 }
+
+sealed class RunLog : IDisposable
+{
+    const string Source = "disk-space-analysis";
+    readonly StreamWriter _file;
+    readonly bool _quiet;
+    readonly bool _eventLog;
+    bool _eventReady;
+
+    public RunLog(string outDir, bool quiet, bool eventLog)
+    {
+        Directory.CreateDirectory(outDir);
+        var path = Path.Combine(outDir, "disk-space-analysis.log");
+        _file = new StreamWriter(new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false))
+        {
+            AutoFlush = true
+        };
+        _quiet = quiet;
+        _eventLog = eventLog;
+        if (!eventLog) return;
+        if (!OperatingSystem.IsWindows())
+        {
+            Error("Windows event log is only available on Windows.");
+            return;
+        }
+        try
+        {
+            if (!EventLog.SourceExists(Source))
+                EventLog.CreateEventSource(Source, "Application");
+            _eventReady = true;
+        }
+        catch (Exception ex)
+        {
+            Error("Windows event log is not available: " + ex.Message);
+        }
+    }
+
+    public void Info(string message, bool toEvent = true) => Write(message, error: false, toEvent);
+
+    public void Error(string message) => Write(message, error: true, toEvent: true);
+
+    void Write(string message, bool error, bool toEvent)
+    {
+        var text = message.Replace('\r', ' ').Replace('\n', ' ');
+        var line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "  " + text;
+        if (!_quiet || error)
+        {
+            if (error) Console.Error.WriteLine(line);
+            else Console.WriteLine(line);
+        }
+        _file.WriteLine(line);
+        if (!_eventLog || !toEvent || !_eventReady || !OperatingSystem.IsWindows()) return;
+        try
+        {
+            if (text.Length > 30000) text = text[..30000];
+            WriteWindowsEvent(text, error);
+        }
+        catch
+        {
+            _eventReady = false;
+        }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    static void WriteWindowsEvent(string text, bool error)
+    {
+        EventLog.WriteEntry(Source, text, error ? EventLogEntryType.Warning : EventLogEntryType.Information, error ? 2000 : 1001);
+    }
+
+    public void Dispose() => _file.Dispose();
+}
+
