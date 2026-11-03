@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SizeTree</title>
+<title>disk-space-analysis</title>
 <style>
   :root {
     --bg:#10120e; --surface:#1a1d17; --surface2:#23281f; --line:#34392e;
@@ -55,7 +55,7 @@
 <div class="wrap">
   <div class="spread">
     <div>
-      <p class="kicker">SIZETREE</p>
+      <p class="kicker">DISK-SPACE-ANALYSIS</p>
       <h1>Disk space analysis</h1>
       <p class="lead">Same job as Tree Size, offline. Open a scan JSON, or use the report embedded in this file.</p>
     </div>
@@ -67,7 +67,7 @@
   <p id="notice" class="err hide"></p>
   <div id="app"></div>
 </div>
-<!--SIZETREE_EMBED-->
+<!--DISK_SPACE_ANALYSIS_EMBED-->
 <script>
 const FILLS = ["#e0a23a","#8aa56e","#d4654a","#c9842a","#5f7d52","#a34b38"];
 const TABS = [["map","Map"],["tree","Tree"],["files","Files"],["types","Types"],["age","Age"],["dupes","Dupes"],["errors","Errors"]];
@@ -209,7 +209,7 @@ function typesHtml() {
       .slice()
       .sort((a, b) => (useAlloc ? b.allocatedBytes - a.allocatedBytes : b.logicalBytes - a.logicalBytes));
     return "<button type='button' class='btn' data-ext='" + esc(row.extension) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span class='mono'>" + esc(row.extension) + "</span><span class='hint'>" + esc(bytes(value)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
-      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? files.map((file) => "<div class='hint mono'>" + esc(bytes(useAlloc ? file.allocatedBytes : file.logicalBytes)) + "  " + esc(file.path) + "</div>").join("") : "<p class='hint'>No file list for this type. Re-scan with the current SizeTree tools.</p>") + "</div>" : "");
+      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? files.map((file) => "<div class='hint mono'>" + esc(bytes(useAlloc ? file.allocatedBytes : file.logicalBytes)) + "  " + esc(file.path) + "</div>").join("") : "<p class='hint'>No file list for this type. Re-scan with the current disk-space-analysis tools.</p>") + "</div>" : "");
   }).join("") || "<p class='hint'>No extension totals.</p>";
 }
 
@@ -221,7 +221,7 @@ function ageHtml() {
     const open = ageOpen === row.bucket;
     const files = row.files || [];
     return "<button type='button' class='btn' data-age='" + esc(row.bucket) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span>" + esc(row.bucket) + "</span><span class='hint'>" + esc(bytes(value)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
-      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? files.map((file) => "<div class='hint mono'>" + esc(bytes(file.logicalBytes)) + "  " + esc(file.path) + "</div>").join("") : "<p class='hint'>No file list for this age. Re-scan with the current SizeTree tools.</p>") + "</div>" : "");
+      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? files.map((file) => "<div class='hint mono'>" + esc(bytes(file.logicalBytes)) + "  " + esc(file.path) + "</div>").join("") : "<p class='hint'>No file list for this age. Re-scan with the current disk-space-analysis tools.</p>") + "</div>" : "");
   }).join("");
 }
 
@@ -240,7 +240,7 @@ function errorsHtml() {
 function render() {
   const app = document.getElementById("app");
   if (!report) {
-    app.innerHTML = "<p class='hint' style='margin-top:16px'>No report yet. Open latest.json from a SizeTree scan.</p>";
+    app.innerHTML = "<p class='hint' style='margin-top:16px'>No report yet. Open latest.json from a disk-space-analysis scan.</p>";
     return;
   }
   const node = find(report.tree, focus) || report.tree;
@@ -281,7 +281,7 @@ function stat(label, value, hint) {
 }
 
 function load(data, name) {
-  if (!data || data.kind !== "scan" || !data.tree) throw new Error("That file is not a SizeTree scan report.");
+  if (!data || data.kind !== "scan" || !data.tree) throw new Error("That file is not a disk-space-analysis scan report.");
   report = data;
   if (!report.roots || !report.roots.length) report.roots = report.root ? [report.root] : [];
   focus = report.tree.path;
@@ -290,7 +290,7 @@ function load(data, name) {
   typeOpen = "";
   query = "";
   document.getElementById("notice").classList.add("hide");
-  if (name) document.title = "SizeTree · " + name;
+  if (name) document.title = "disk-space-analysis · " + name;
   render();
 }
 
@@ -334,7 +334,7 @@ document.getElementById("file").addEventListener("change", function (event) {
   reader.readAsText(file);
 });
 
-const embedded = document.getElementById("sizetree-embed");
+const embedded = document.getElementById("disk-space-analysis-embed");
 if (embedded && embedded.textContent && embedded.textContent.trim() && embedded.textContent.trim() !== "null") {
   try { load(JSON.parse(embedded.textContent), "latest.html"); }
   catch (error) {

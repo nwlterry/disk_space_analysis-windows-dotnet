@@ -44,7 +44,7 @@ int Run(string[] argv)
     {
         "scan" => Scan(opts),
         "compare" => Compare(opts),
-        _ => throw new InvalidOperationException("Unknown command. Use: SizeTree scan | compare")
+        _ => throw new InvalidOperationException("Unknown command. Use: disk-space-analysis scan | compare")
     };
 }
 
@@ -77,7 +77,7 @@ int Scan(Dictionary<string, List<string>> opts)
 {
     if (!opts.TryGetValue("path", out var pathArgs) || pathArgs.Count == 0)
         throw new InvalidOperationException("scan requires --path <directory>. Repeat --path for more than one.");
-    var outDir = Opt(opts, "out") ?? "SizeTreeReports";
+    var outDir = Opt(opts, "out") ?? "disk-space-analysis-reports";
     var topFiles = Math.Max(1, ParseInt(Opt(opts, "top-files"), 200));
     var topFolders = Math.Max(1, ParseInt(Opt(opts, "top-folders"), 500));
     var depth = ParseInt(Opt(opts, "depth"), 0);
@@ -295,9 +295,9 @@ int Scan(Dictionary<string, List<string>> opts)
     var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
     var json = JsonSerializer.Serialize(report, jsonOptions);
     File.WriteAllText(Path.Combine(outDir, "latest.json"), json, new UTF8Encoding(false));
-    File.WriteAllText(Path.Combine(outDir, $"sizetree-{stamp}.json"), json, new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.json"), json, new UTF8Encoding(false));
     WriteFoldersCsv(Path.Combine(outDir, "latest-folders.csv"), root);
-    WriteFoldersCsv(Path.Combine(outDir, $"sizetree-{stamp}-folders.csv"), root);
+    WriteFoldersCsv(Path.Combine(outDir, $"disk-space-analysis-{stamp}-folders.csv"), root);
     WriteFilesCsv(Path.Combine(outDir, "latest-files.csv"), report.LargestFiles);
     WriteSimpleCsv(Path.Combine(outDir, "latest-extensions.csv"),
         ["extension", "fileCount", "logicalBytes", "allocatedBytes"],
@@ -331,7 +331,7 @@ int Scan(Dictionary<string, List<string>> opts)
         report.Errors.Select(row => new[] { row.Path, row.Message }));
     var html = BuildOfflineHtml(json);
     File.WriteAllText(Path.Combine(outDir, "latest.html"), html, new UTF8Encoding(false));
-    File.WriteAllText(Path.Combine(outDir, $"sizetree-{stamp}.html"), html, new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.html"), html, new UTF8Encoding(false));
 
     if (!quiet)
     {
@@ -345,7 +345,7 @@ int Compare(Dictionary<string, List<string>> opts)
 {
     var beforePath = Opt(opts, "before") ?? throw new InvalidOperationException("compare requires --before <folders.csv or .json>");
     var afterPath = Opt(opts, "after") ?? throw new InvalidOperationException("compare requires --after <folders.csv or .json>");
-    var outDir = Opt(opts, "out") ?? "SizeTreeCompare";
+    var outDir = Opt(opts, "out") ?? "disk-space-analysis-compare";
     var top = Math.Max(1, ParseInt(Opt(opts, "top"), 100));
     var minDelta = Math.Max(0, ParseLong(Opt(opts, "min-delta-bytes"), 1024 * 1024));
 
@@ -805,17 +805,17 @@ string BuildOfflineHtml(string json)
 {
     var template = LoadViewerTemplate();
     var safe = json.Replace("<", "\\u003c", StringComparison.Ordinal).Replace(">", "\\u003e", StringComparison.Ordinal).Replace("&", "\\u0026", StringComparison.Ordinal);
-    var embed = "<script id=\"sizetree-embed\" type=\"application/json\">" + safe + "</script>";
-    if (template.Contains("<!--SIZETREE_EMBED-->", StringComparison.Ordinal))
-        return template.Replace("<!--SIZETREE_EMBED-->", embed, StringComparison.Ordinal);
-    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>SizeTree</title></head><body><p>Place viewer.html next to SizeTree.exe.</p>" + embed + "</body></html>";
+    var embed = "<script id=\"disk-space-analysis-embed\" type=\"application/json\">" + safe + "</script>";
+    if (template.Contains("<!--DISK_SPACE_ANALYSIS_EMBED-->", StringComparison.Ordinal))
+        return template.Replace("<!--DISK_SPACE_ANALYSIS_EMBED-->", embed, StringComparison.Ordinal);
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>disk-space-analysis</title></head><body><p>Place viewer.html next to disk-space-analysis.exe.</p>" + embed + "</body></html>";
 }
 
 string LoadViewerTemplate()
 {
     var beside = Path.Combine(AppContext.BaseDirectory, "viewer.html");
     if (File.Exists(beside)) return File.ReadAllText(beside);
-    using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("SizeTree.viewer.html");
+    using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("disk-space-analysis.viewer.html");
     if (stream == null) return "";
     using var reader = new StreamReader(stream);
     return reader.ReadToEnd();
@@ -854,14 +854,14 @@ string FormatBytes(long number)
 void PrintHelp()
 {
     Console.WriteLine("""
-        SizeTree 1.0 — disk space analysis for Windows Server
+        disk-space-analysis 1.0 — disk space analysis for Windows Server
 
-          SizeTree scan --path D:\ --path E:\Data --out C:\SizeTreeReports --duplicates --hash --allocated
-          SizeTree compare --before older-folders.csv --after latest-folders.csv --out C:\SizeTreeReports\compare
+          disk-space-analysis scan --path D:\ --path E:\Data --out C:\disk-space-analysis-reports --duplicates --hash --allocated
+          disk-space-analysis compare --before older-folders.csv --after latest-folders.csv --out C:\disk-space-analysis-reports\compare
 
         scan
           --path <dir>            Folder, volume, or UNC path. Repeat for more than one. Semicolons also split a value.
-          --out <dir>             Report folder (default SizeTreeReports)
+          --out <dir>             Report folder (default disk-space-analysis-reports)
           --top-files <n>         Largest files kept (default 200)
           --top-folders <n>       Largest folders kept in JSON (default 500)
           --depth <n>             Directory levels to descend (0 = all)
@@ -874,7 +874,7 @@ void PrintHelp()
           --exclude <pattern>     Name or wildcard. Repeat, or separate with semicolons
           --quiet
 
-        compare reads folders.csv or a scan JSON. Open latest.json in the SizeTree viewer, or double-click latest.html for the same screen offline.
+        compare reads folders.csv or a scan JSON. Open latest.json in the disk-space-analysis viewer, or double-click latest.html for the same screen offline.
 
         Publish:
           dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o publish
@@ -1085,7 +1085,7 @@ sealed class FolderMeasure
 sealed class ScanReport
 {
     public string Kind { get; set; } = "scan";
-    public string Tool { get; set; } = "SizeTree.DotNet";
+    public string Tool { get; set; } = "disk-space-analysis.dotnet";
     public string Version { get; set; } = "1.0";
     public string ScannedAt { get; set; } = "";
     public string Host { get; set; } = "";
@@ -1183,7 +1183,7 @@ sealed class ErrRow
 sealed class CompareReport
 {
     public string Kind { get; set; } = "compare";
-    public string Tool { get; set; } = "SizeTree.DotNet";
+    public string Tool { get; set; } = "disk-space-analysis.dotnet";
     public string Version { get; set; } = "1.0";
     public string GeneratedAt { get; set; } = "";
     public CompareSide Before { get; set; } = new();

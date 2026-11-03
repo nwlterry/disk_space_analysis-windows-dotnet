@@ -2,11 +2,11 @@
 
 Scan one or more folders, volumes, or UNC paths on Windows Server 2016 and later. Same reports as the PowerShell scanner: folder tree, largest files, file types, age, duplicates, and what changed between two scans.
 
-`SizeTree.exe` in the release is a self-contained single file for Windows x64. It does not need a .NET install. Copy it to the server and run it. The offline viewer is embedded in the executable.
+`disk-space-analysis.exe` in the release is a self-contained single file for Windows x64. It does not need a .NET install. Copy it to the server and run it. The offline viewer is embedded in the executable.
 
 ```powershell
-.\SizeTree.exe scan --path D:\ --path E:\Data --out C:\SizeTreeReports --duplicates --hash --allocated
-.\SizeTree.exe compare --before C:\SizeTreeReports\older-folders.csv --after C:\SizeTreeReports\latest-folders.csv --out C:\SizeTreeReports\compare
+.\disk-space-analysis.exe scan --path D:\ --path E:\Data --out C:\disk-space-analysis-reports --duplicates --hash --allocated
+.\disk-space-analysis.exe compare --before C:\disk-space-analysis-reports\older-folders.csv --after C:\disk-space-analysis-reports\latest-folders.csv --out C:\disk-space-analysis-reports\compare
 ```
 
 Repeat `--path` for each directory, or separate paths in one value with a semicolon. One path still works. Several paths are drawn as one map, with a button for each path.
@@ -17,27 +17,27 @@ Repeat `--path` for each directory, or separate paths in one value with a semico
 
 ## Build it yourself
 
-.NET 8 SDK. `viewer.html` must sit next to `SizeTree.csproj` so the offline page is embedded.
+.NET 8 SDK. `viewer.html` must sit next to `disk-space-analysis.csproj` so the offline page is embedded.
 
 Framework-dependent (the server must have the .NET 8 runtime):
 
 ```powershell
-dotnet publish .\SizeTree.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o .\publish
+dotnet publish .\disk-space-analysis.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -o .\publish
 ```
 
 Portable, no runtime install:
 
 ```powershell
-dotnet publish .\SizeTree.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o .\publish
+dotnet publish .\disk-space-analysis.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o .\publish
 ```
 
 ## Scan options
 
 ```text
-SizeTree scan --path D:\ --path E:\Data --out C:\SizeTreeReports --duplicates --hash --allocated
+disk-space-analysis scan --path D:\ --path E:\Data --out C:\disk-space-analysis-reports --duplicates --hash --allocated
 
   --path <dir>            Folder, volume, or UNC path. Repeat for more than one.
-  --out <dir>             Report folder (default SizeTreeReports)
+  --out <dir>             Report folder (default disk-space-analysis-reports)
   --top-files <n>         Largest files kept (default 200)
   --top-folders <n>       Largest folders kept in JSON (default 500)
   --depth <n>             Directory levels to descend (0 = all)
