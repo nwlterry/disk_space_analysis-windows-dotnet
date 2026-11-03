@@ -41,6 +41,9 @@
   .tree button.on { background:var(--surface2); }
   .mono { font-family:Consolas,monospace; }
   table { width:100%; border-collapse:collapse; }
+  table.files { width:100%; table-layout:fixed; }
+  table.files td:first-child { width:72%; word-break:break-all; }
+  table.files td:last-child { width:28%; white-space:nowrap; text-align:right; }
   td, th { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
   th button { background:transparent; border:0; color:var(--faint); padding:0; }
   .bar { height:8px; background:var(--bg); border-radius:99px; overflow:hidden; }
@@ -190,11 +193,16 @@ function treeRows(node, depth, html) {
   return html + '<button type="button" class="' + (node.path === focus ? "on" : "") + '" data-open="' + esc(node.path) + '" data-drill="1" style="padding-left:' + (8 + depth * 14) + 'px"><span class="mono">' + esc(node.name) + '</span><span style="margin-left:auto" class="hint">' + esc(bytes(here)) + "</span></button>" + childHtml;
 }
 
-function filesHtml() {
-  const rows = (report.largestFiles || []).slice().sort((a, b) => b.logicalBytes - a.logicalBytes);
-  return "<table><tr><th>File</th><th>Size</th><th>Modified</th></tr>" + rows.map((file) =>
-    "<tr><td><div>" + esc(file.name) + '</div><div class="hint mono">' + esc(file.path) + "</div></td><td class='mono'>" + esc(bytes(mode === "allocated" && report.summary.allocatedCollected ? file.allocatedBytes : file.logicalBytes)) + "</td><td class='hint'>" + esc(file.modifiedUtc || "") + "</td></tr>"
+function fileTable(files, useAlloc) {
+  return "<table class='files'>" + files.map((file) =>
+    "<tr><td><div>" + esc(file.name) + "</div><div class='hint mono'>" + esc(file.path) + "</div></td><td class='mono'>" + esc(bytes(useAlloc ? file.allocatedBytes : file.logicalBytes)) + "<div class='hint'>" + esc(file.modifiedUtc || "") + "</div></td></tr>"
   ).join("") + "</table>";
+}
+
+function filesHtml() {
+  const useAlloc = mode === "allocated" && report.summary.allocatedCollected;
+  const rows = (report.largestFiles || []).slice().sort((a, b) => (useAlloc ? b.allocatedBytes - a.allocatedBytes : b.logicalBytes - a.logicalBytes));
+  return fileTable(rows, useAlloc);
 }
 
 function typesHtml() {
@@ -209,7 +217,7 @@ function typesHtml() {
       .slice()
       .sort((a, b) => (useAlloc ? b.allocatedBytes - a.allocatedBytes : b.logicalBytes - a.logicalBytes));
     return "<button type='button' class='btn' data-ext='" + esc(row.extension) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span class='mono'>" + esc(row.extension) + "</span><span class='hint'>" + esc(bytes(value)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
-      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? files.map((file) => "<div class='hint mono'>" + esc(bytes(useAlloc ? file.allocatedBytes : file.logicalBytes)) + "  " + esc(file.path) + "</div>").join("") : "<p class='hint'>No file list for this type. Re-scan with the current disk-space-analysis tools.</p>") + "</div>" : "");
+      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? fileTable(files, useAlloc) : "<p class='hint'>No file list for this type. Re-scan with the current disk-space-analysis tools.</p>") + "</div>" : "");
   }).join("") || "<p class='hint'>No extension totals.</p>";
 }
 
@@ -218,10 +226,11 @@ function ageHtml() {
   const max = rows.reduce((m, row) => Math.max(m, mode === "allocated" && report.summary.allocatedCollected ? row.allocatedBytes : row.logicalBytes), 1);
   return rows.map((row) => {
     const value = mode === "allocated" && report.summary.allocatedCollected ? row.allocatedBytes : row.logicalBytes;
+    const useAlloc = mode === "allocated" && report.summary.allocatedCollected;
     const open = ageOpen === row.bucket;
-    const files = row.files || [];
+    const files = (row.files || []).slice();
     return "<button type='button' class='btn' data-age='" + esc(row.bucket) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span>" + esc(row.bucket) + "</span><span class='hint'>" + esc(bytes(value)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
-      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? files.map((file) => "<div class='hint mono'>" + esc(bytes(file.logicalBytes)) + "  " + esc(file.path) + "</div>").join("") : "<p class='hint'>No file list for this age. Re-scan with the current disk-space-analysis tools.</p>") + "</div>" : "");
+      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? fileTable(files, useAlloc) : "<p class='hint'>No file list for this age. Re-scan with the current disk-space-analysis tools.</p>") + "</div>" : "");
   }).join("");
 }
 
