@@ -337,8 +337,8 @@ int Scan(Dictionary<string, List<string>> opts)
         ["path", "message"],
         report.Errors.Select(row => new[] { row.Path, row.Message }));
     var html = BuildOfflineHtml(json);
-    File.WriteAllText(Path.Combine(outDir, "latest.html"), html, new UTF8Encoding(false));
-    File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.html"), html, new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(outDir, "latest.html"), html, new UTF8Encoding(true));
+    File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.html"), html, new UTF8Encoding(true));
 
     log.Info($"Done in {started.Elapsed.TotalSeconds:n1}s. Logical {FormatBytes(root.LogicalBytes)}. Files {root.FileCount:n0}. Denied {state.Denied}. Reports in {Path.GetFullPath(outDir)}. Log {Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log")}");
     if (depth > 0) log.Info($"Depth limit {depth} was set. Totals exclude anything deeper.");
@@ -834,11 +834,12 @@ string BuildOfflineHtml(string json)
 
 string LoadViewerTemplate()
 {
+    var utf8 = new UTF8Encoding(false);
     var beside = Path.Combine(AppContext.BaseDirectory, "viewer.html");
-    if (File.Exists(beside)) return File.ReadAllText(beside);
+    if (File.Exists(beside)) return File.ReadAllText(beside, utf8);
     using var stream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("disk-space-analysis.viewer.html");
     if (stream == null) return "";
-    using var reader = new StreamReader(stream);
+    using var reader = new StreamReader(stream, utf8);
     return reader.ReadToEnd();
 }
 

@@ -37,8 +37,12 @@
   .cell { position:absolute; border:0; padding:6px; text-align:left; overflow:hidden; color:#14160f; }
   .cell b, .cell small { display:block; }
   .cell small { font-family:Consolas,monospace; }
-  .tree button, .list button { display:flex; width:100%; text-align:left; background:transparent; border:0; border-bottom:1px solid var(--line); padding:8px 4px; gap:8px; }
-  .tree button.on { background:var(--surface2); }
+  .tree .trow { display:flex; align-items:stretch; border-bottom:1px solid var(--line); }
+  .tree .twist { width:32px; flex:0 0 32px; height:auto; border:0; border-radius:0; background:transparent; color:var(--muted); padding:0; }
+  .tree .twist.pad { display:inline-block; width:32px; flex:0 0 32px; }
+  .tree .tname { display:flex; flex:1; min-width:0; height:auto; text-align:left; background:transparent; border:0; border-radius:0; padding:8px 4px; gap:8px; }
+  .tree .tname.on { background:var(--surface2); }
+  .list button { display:flex; width:100%; text-align:left; background:transparent; border:0; border-bottom:1px solid var(--line); padding:8px 4px; gap:8px; }
   .mono { font-family:Consolas,monospace; }
   table { width:100%; border-collapse:collapse; }
   table.files { width:100%; table-layout:fixed; }
@@ -81,6 +85,8 @@ let pane = "map";
 let ageOpen = "";
 let typeOpen = "";
 let query = "";
+let expanded = {};
+const DOT = " &#183; ";
 
 function bytes(n) {
   n = Number(n) || 0;
@@ -182,15 +188,62 @@ function mapHtml(node) {
   }).join("") + "</div>";
 }
 
-function treeRows(node, depth, html) {
+function treeRows(node, depth) {
   const kids = node.children || [];
   const q = query.trim().toLowerCase();
   const selfHit = !q || node.path.toLowerCase().indexOf(q) >= 0 || node.name.toLowerCase().indexOf(q) >= 0;
-  let childHtml = "";
-  for (const child of kids) childHtml += treeRows(child, depth + 1, "");
-  if (q && !selfHit && !childHtml) return html;
+  const nested = [];
+  for (let i = 0; i < kids.length; i++) {
+    const html = treeRows(kids[i], depth + 1);
+    if (html) nested.push(html);
+  }
+  if (q && !selfHit && !nested.length) return "";
+  const open = q ? true : !!expanded[node.path];
   const here = sizeOf(node);
-  return html + '<button type="button" class="' + (node.path === focus ? "on" : "") + '" data-open="' + esc(node.path) + '" data-drill="1" style="padding-left:' + (8 + depth * 14) + 'px"><span class="mono">' + esc(node.name) + '</span><span style="margin-left:auto" class="hint">' + esc(bytes(here)) + "</span></button>" + childHtml;
+  const twist = kids.length
+    ? "<button type='button' class='twist' data-toggle='" + esc(node.path) + "'>" + (open ? "-" : "+") + "</button>"
+    : "<span class='twist pad'></span>";
+  let html = "<div class='trow' style='padding-left:" + (depth * 14) + "px'>" + twist +
+    "<button type='button' class='tname" + (node.path === focus ? " on" : "") + "' data-open='" + esc(node.path) + "' data-drill='1'><span>" + esc(node.name) + "</span><span style='margin-left:auto' class='hint mono'>" + esc(bytes(here)) + "</span></button></div>";
+  if (open) html += nested.join("");
+  return html;
+}
+
+function listedFiles(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.slice();
+  if (typeof value === "object" && (value.path || value.name)) return [value];
+  if (typeof value === "object") {
+    return Object.keys(value).map(function (key) { return value[key]; }).filter(function (item) {
+      return item && typeof item === "object";
+    });
+  }
+  return [];
+}
+
+const AGE_RANGES = [
+  ["0-7 days", 0, 7],
+  ["8-30 days", 7, 30],
+  ["31-90 days", 30, 90],
+  ["91-365 days", 90, 365],
+  ["1-3 years", 365, 1095],
+  ["Older than 3 years", 1095, Infinity]
+];
+
+function filesInBucket(files, bucket) {
+  const key = String(bucket || "").replace(/\u2013/g, "-").replace(/\s+/g, " ").trim();
+  let range = null;
+  for (let i = 0; i < AGE_RANGES.length; i++) if (AGE_RANGES[i][0] === key) range = AGE_RANGES[i];
+  if (!range) return [];
+  const now = Date.now();
+  return files.filter(function (file) {
+    const stamp = Date.parse(file.modifiedUtc || "");
+    if (isNaN(stamp)) return false;
+    let days = (now - stamp) / 86400000;
+    if (days < 0) days = 0;
+    if (range[1] === 0) return days <= range[2];
+    return days > range[1] && days <= range[2];
+  });
 }
 
 function fileTable(files, useAlloc) {
@@ -212,11 +265,11 @@ function typesHtml() {
   return rows.map((row) => {
     const value = useAlloc ? row.allocatedBytes : row.logicalBytes;
     const open = typeOpen === row.extension;
-    const listed = (row.files || []).slice();
+    const listed = listedFiles(row.files || row.Files);
     const files = (listed.length ? listed : (report.largestFiles || []).filter((file) => (file.extension || "(none)") === row.extension))
       .slice()
       .sort((a, b) => (useAlloc ? b.allocatedBytes - a.allocatedBytes : b.logicalBytes - a.logicalBytes));
-    return "<button type='button' class='btn' data-ext='" + esc(row.extension) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span class='mono'>" + esc(row.extension) + "</span><span class='hint'>" + esc(bytes(value)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
+    return "<button type='button' class='btn' data-ext='" + esc(row.extension) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span class='mono'>" + esc(row.extension) + "</span><span class='hint'>" + esc(bytes(value)) + DOT + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
       (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? fileTable(files, useAlloc) : "<p class='hint'>No file list for this type. Re-scan with the current disk-space-analysis tools.</p>") + "</div>" : "");
   }).join("") || "<p class='hint'>No extension totals.</p>";
 }
@@ -228,16 +281,19 @@ function ageHtml() {
     const value = mode === "allocated" && report.summary.allocatedCollected ? row.allocatedBytes : row.logicalBytes;
     const useAlloc = mode === "allocated" && report.summary.allocatedCollected;
     const open = ageOpen === row.bucket;
-    const files = (row.files || []).slice();
-    return "<button type='button' class='btn' data-age='" + esc(row.bucket) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span>" + esc(row.bucket) + "</span><span class='hint'>" + esc(bytes(value)) + " · " + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
-      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? fileTable(files, useAlloc) : "<p class='hint'>No file list for this age. Re-scan with the current disk-space-analysis tools.</p>") + "</div>" : "");
+    const listed = listedFiles(row.files || row.Files);
+    const files = (listed.length ? listed : filesInBucket(report.largestFiles || [], row.bucket))
+      .slice()
+      .sort((a, b) => (useAlloc ? Number(b.allocatedBytes) - Number(a.allocatedBytes) : Number(b.logicalBytes) - Number(a.logicalBytes)));
+    return "<button type='button' class='btn' data-age='" + esc(row.bucket) + "' style='width:100%;height:auto;text-align:left;margin-bottom:8px;padding:8px'><div class='row' style='justify-content:space-between'><span>" + esc(row.bucket) + "</span><span class='hint'>" + esc(bytes(value)) + DOT + row.fileCount + "</span></div><div class='bar'><i style='width:" + Math.max(2, (value / max) * 100) + "%'></i></div></button>" +
+      (open ? "<div style='margin:0 0 12px 8px'>" + (files.length ? "<p class='hint'>" + files.length + " files</p>" + fileTable(files, useAlloc) : "<p class='hint'>No files recorded in this age.</p>") + "</div>" : "");
   }).join("");
 }
 
 function dupesHtml() {
   const rows = report.duplicates || [];
   if (!rows.length) return "<p class='hint'>No duplicate groups. Re-scan with -Duplicates or --duplicates.</p>";
-  return rows.map((row) => "<div style='margin-bottom:12px'><b>" + esc(bytes(row.wasteBytes)) + " waste</b> <span class='hint'>" + row.count + " files · " + esc(row.match) + "</span><div class='hint mono'>" + (row.paths || []).map(esc).join("<br>") + "</div></div>").join("");
+  return rows.map((row) => "<div style='margin-bottom:12px'><b>" + esc(bytes(row.wasteBytes)) + " waste</b> <span class='hint'>" + row.count + " files" + DOT + esc(row.match) + "</span><div class='hint mono'>" + (row.paths || []).map(esc).join("<br>") + "</div></div>").join("");
 }
 
 function errorsHtml() {
@@ -260,9 +316,9 @@ function render() {
   const here = sizeOf(node);
   let body = "";
   if (pane === "map") {
-    body = "<div class='row' style='justify-content:space-between;margin-bottom:8px'><b>" + esc(node.name) + "</b><span class='hint mono'>" + esc(bytes(here)) + " · " + esc(pct(here, volume)) + "</span></div>" + mapHtml(node) + "<p class='hint'>" + esc(bytes(here)) + " in " + esc(node.name) + ". Click a block to open that folder.</p>";
+    body = "<div class='row' style='justify-content:space-between;margin-bottom:8px'><b>" + esc(node.name) + "</b><span class='hint mono'>" + esc(bytes(here)) + DOT + esc(pct(here, volume)) + "</span></div>" + mapHtml(node) + "<p class='hint'>" + esc(bytes(here)) + " in " + esc(node.name) + ". Click a block to open that folder.</p>";
   } else if (pane === "tree") {
-    body = "<label class='hint'>Folders<input id='filter' type='search' placeholder='Filter path' value='" + esc(query) + "'></label><div class='tree'>" + treeRows(report.tree, 0, "") + "</div>";
+    body = "<label class='hint'>Folders<input id='filter' type='search' placeholder='Filter path' value='" + esc(query) + "'></label><p class='hint'>Use + and - to expand or collapse a folder. Click the name to select it.</p><div class='tree'>" + treeRows(report.tree, 0) + "</div>";
   } else if (pane === "files") body = filesHtml();
   else if (pane === "types") body = typesHtml();
   else if (pane === "age") body = ageHtml();
@@ -275,18 +331,26 @@ function render() {
   app.innerHTML =
     "<div class='stats'>" +
     stat("Logical size", bytes(report.summary.logicalBytes), (report.host || "") ) +
-    stat(report.summary.allocatedCollected ? "Allocated" : "Allocated not scanned", report.summary.allocatedCollected ? bytes(report.summary.allocatedBytes) : "—", report.summary.allocatedCollected ? "On-disk allocation" : "Re-scan with -AllocatedSize") +
+    stat(report.summary.allocatedCollected ? "Allocated" : "Allocated not scanned", report.summary.allocatedCollected ? bytes(report.summary.allocatedBytes) : "-", report.summary.allocatedCollected ? "On-disk allocation" : "Re-scan with -AllocatedSize") +
     stat("Files", Number(report.summary.fileCount || 0).toLocaleString(), Number(report.summary.folderCount || 0).toLocaleString() + " folders") +
-    stat("Duplicate waste", bytes(report.summary.duplicateWasteBytes), (report.summary.duplicateGroups || 0) + " groups · " + (report.summary.deniedCount || 0) + " denied") +
+    stat("Duplicate waste", bytes(report.summary.duplicateWasteBytes), (report.summary.duplicateGroups || 0) + " groups | " + (report.summary.deniedCount || 0) + " denied") +
     "</div><div style='margin-top:16px'>" + pathButtons +
     "<div class='row'><div class='row' style='flex:1'>" + trail.map((crumb, index) => (index ? "<span class='hint'>/</span>" : "") + "<button type='button' class='crumb" + (crumb.path === node.path ? " on" : "") + "' data-open='" + esc(crumb.path) + "' data-drill='1'>" + esc(crumb.name) + "</button>").join("") + "</div>" +
     "<button type='button' id='logical' class='btn" + (mode === "logical" ? " on" : "") + "'>Logical</button><button type='button' id='allocated' class='btn" + (mode === "allocated" ? " on" : "") + "'" + (report.summary.allocatedCollected ? "" : " disabled") + ">Allocated</button>" +
-    "<span class='meta mono'>" + esc(report.scannedAt || "") + " · " + esc(report.tool || "") + " " + esc(report.version || "") + "</span></div>" +
+    "<span class='meta mono'>" + esc(report.scannedAt || "") + DOT + esc(report.tool || "") + " " + esc(report.version || "") + "</span></div>" +
     "<div class='tabs'>" + TABS.map(([id, label]) => "<button type='button' class='tab" + (pane === id ? " on" : "") + "' data-pane='" + id + "'>" + label + (id === "errors" && (report.errors || []).length ? " " + report.errors.length : "") + "</button>").join("") + "</div>" +
     "<section class='panel'>" + body + "</section></div>";
 }
 function stat(label, value, hint) {
   return "<div class='stat'><span>" + esc(label) + "</span><b>" + esc(value) + "</b><div class='hint'>" + esc(hint) + "</div></div>";
+}
+
+function seedExpanded(node) {
+  expanded = {};
+  if (!node) return;
+  expanded[node.path] = true;
+  const kids = node.children || [];
+  for (let i = 0; i < kids.length; i++) expanded[kids[i].path] = true;
 }
 
 function load(data, name) {
@@ -298,12 +362,20 @@ function load(data, name) {
   ageOpen = "";
   typeOpen = "";
   query = "";
+  seedExpanded(report.tree);
   document.getElementById("notice").classList.add("hide");
-  if (name) document.title = "disk-space-analysis · " + name;
+  if (name) document.title = "disk-space-analysis - " + name;
   render();
 }
 
 document.getElementById("app").addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-toggle]");
+  if (toggle) {
+    const path = toggle.getAttribute("data-toggle");
+    expanded[path] = !expanded[path];
+    render();
+    return;
+  }
   const paneBtn = event.target.closest("[data-pane]");
   if (paneBtn) { pane = paneBtn.getAttribute("data-pane"); render(); return; }
   const ageBtn = event.target.closest("[data-age]");
@@ -313,7 +385,12 @@ document.getElementById("app").addEventListener("click", (event) => {
   const rootBtn = event.target.closest("[data-root]");
   if (rootBtn) { focus = rootBtn.getAttribute("data-root"); pane = "map"; render(); return; }
   const openBtn = event.target.closest("[data-open]");
-  if (openBtn && openBtn.getAttribute("data-drill") !== "0") { focus = openBtn.getAttribute("data-open"); pane = "map"; render(); }
+  if (openBtn && openBtn.getAttribute("data-drill") !== "0") {
+    focus = openBtn.getAttribute("data-open");
+    if (pane === "tree") expanded[focus] = true;
+    else pane = "map";
+    render();
+  }
 });
 document.getElementById("app").addEventListener("input", (event) => {
   if (event.target.id === "filter") { query = event.target.value; render(); const box = document.getElementById("filter"); if (box) { box.focus(); box.setSelectionRange(query.length, query.length); } }
