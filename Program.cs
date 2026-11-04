@@ -346,7 +346,7 @@ int Scan(Dictionary<string, List<string>> opts)
     void WritePair(string leaf, Action<string> write)
     {
         write(Path.Combine(outDir, "latest-disk-space-analysis-" + leaf));
-        write(Path.Combine(outDir, $"disk-space-analysis-{stamp}-{leaf}"));
+        write(Path.Combine(outDir, "disk-space-analysis-" + leaf.Replace(".csv", "-" + stamp + ".csv")));
     }
     }
     catch (Exception ex)
@@ -417,7 +417,7 @@ int Compare(Dictionary<string, List<string>> opts)
     void Save(string name, string extension, Action<string> write)
     {
         write(Path.Combine(outDir, "compare-disk-space-analysis" + name + extension));
-        write(Path.Combine(outDir, $"compare-disk-space-analysis-{stamp}" + name + extension));
+        write(Path.Combine(outDir, "compare-disk-space-analysis" + name + "-" + stamp + extension));
     }
     var html = BuildCompareHtml(report);
     Save("", ".json", path => File.WriteAllText(path, json, new UTF8Encoding(false)));
@@ -427,7 +427,7 @@ int Compare(Dictionary<string, List<string>> opts)
     Save("-added", ".csv", path => WriteChangeCsv(path, report.Added));
     Save("-removed", ".csv", path => WriteChangeCsv(path, report.Removed));
     var net = after.RootBytes - before.RootBytes;
-    var htmlPath = Path.Combine(outDir, $"compare-disk-space-analysis-{stamp}.html");
+    var htmlPath = Path.Combine(outDir, "compare-disk-space-analysis-" + stamp + ".html");
     log.Info($"Net {net} bytes. Grew {report.Grew.Count}, shrunk {report.Shrunk.Count}, added {report.Added.Count}, removed {report.Removed.Count}.");
     log.Info("Wrote " + Path.GetFullPath(htmlPath) + ". Log " + Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log"));
     return 0;
@@ -998,7 +998,7 @@ void PrintHelp()
         disk-space-analysis 1.0 — disk space analysis for Windows Server
 
           disk-space-analysis scan --path D:\ --path E:\Data --out C:\disk-space-analysis-reports --duplicates --hash --allocated
-          disk-space-analysis compare --before disk-space-analysis-20261006-020000-folders.csv --after disk-space-analysis-20261103-090000-folders.csv --out C:\disk-space-analysis-reports\compare
+          disk-space-analysis compare --before disk-space-analysis-folders-20261006-020000.csv --after disk-space-analysis-folders-20261103-090000.csv --out C:\disk-space-analysis-reports\compare
 
         scan
           --path <dir>            Folder, volume, or UNC path. Repeat for more than one. Semicolons also split a value.
@@ -1017,7 +1017,7 @@ void PrintHelp()
           --quiet                 Hide console progress. The log file is still written
 
         Open latest-disk-space-analysis.json in the disk-space-analysis viewer, or double-click latest-disk-space-analysis.html for the same screen offline.
-        Compare reads a timestamped folders CSV, disk-space-analysis-yyyyMMdd-HHmmss-folders.csv.
+        Compare reads a historical folders CSV, disk-space-analysis-folders-yyyyMMdd-HHmmss.csv.
         Each run appends disk-space-analysis.log in the report folder. The event source is disk-space-analysis.
         The first --event-log run must be elevated so Windows can register that source.
 
