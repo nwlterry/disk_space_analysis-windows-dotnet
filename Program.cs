@@ -301,7 +301,7 @@ int Scan(Dictionary<string, List<string>> opts)
     Directory.CreateDirectory(outDir);
     var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
     var json = JsonSerializer.Serialize(report, jsonOptions);
-    File.WriteAllText(Path.Combine(outDir, "latest.json"), json, new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(outDir, "latest-disk-space-analysis.json"), json, new UTF8Encoding(false));
     File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.json"), json, new UTF8Encoding(false));
     WritePair("folders.csv", path => WriteFoldersCsv(path, root));
     WritePair("files.csv", path => WriteFilesCsv(path, report.LargestFiles));
@@ -336,7 +336,7 @@ int Scan(Dictionary<string, List<string>> opts)
         ["path", "message"],
         report.Errors.Select(row => new[] { row.Path, row.Message })));
     var html = BuildOfflineHtml(json);
-    File.WriteAllText(Path.Combine(outDir, "latest.html"), html, new UTF8Encoding(true));
+    File.WriteAllText(Path.Combine(outDir, "latest-disk-space-analysis.html"), html, new UTF8Encoding(true));
     File.WriteAllText(Path.Combine(outDir, $"disk-space-analysis-{stamp}.html"), html, new UTF8Encoding(true));
 
     log.Info($"Done in {started.Elapsed.TotalSeconds:n1}s. Logical {FormatBytes(root.LogicalBytes)}. Files {root.FileCount:n0}. Denied {state.Denied}. Reports in {Path.GetFullPath(outDir)}. Log {Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log")}");
@@ -345,7 +345,7 @@ int Scan(Dictionary<string, List<string>> opts)
 
     void WritePair(string leaf, Action<string> write)
     {
-        write(Path.Combine(outDir, "latest-" + leaf));
+        write(Path.Combine(outDir, "latest-disk-space-analysis-" + leaf));
         write(Path.Combine(outDir, $"disk-space-analysis-{stamp}-{leaf}"));
     }
     }
@@ -414,20 +414,20 @@ int Compare(Dictionary<string, List<string>> opts)
     Directory.CreateDirectory(outDir);
     var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
     var json = JsonSerializer.Serialize(report, jsonOptions);
-    void Save(string leaf, Action<string> write)
+    void Save(string name, string extension, Action<string> write)
     {
-        write(Path.Combine(outDir, leaf));
-        write(Path.Combine(outDir, $"disk-space-analysis-{stamp}-{leaf}"));
+        write(Path.Combine(outDir, "compare-disk-space-analysis" + name + extension));
+        write(Path.Combine(outDir, $"compare-disk-space-analysis-{stamp}" + name + extension));
     }
     var html = BuildCompareHtml(report);
-    Save("compare.json", path => File.WriteAllText(path, json, new UTF8Encoding(false)));
-    Save("compare.html", path => File.WriteAllText(path, html, new UTF8Encoding(true)));
-    Save("grew.csv", path => WriteChangeCsv(path, report.Grew));
-    Save("shrunk.csv", path => WriteChangeCsv(path, report.Shrunk));
-    Save("added.csv", path => WriteChangeCsv(path, report.Added));
-    Save("removed.csv", path => WriteChangeCsv(path, report.Removed));
+    Save("", ".json", path => File.WriteAllText(path, json, new UTF8Encoding(false)));
+    Save("", ".html", path => File.WriteAllText(path, html, new UTF8Encoding(true)));
+    Save("-grew", ".csv", path => WriteChangeCsv(path, report.Grew));
+    Save("-shrunk", ".csv", path => WriteChangeCsv(path, report.Shrunk));
+    Save("-added", ".csv", path => WriteChangeCsv(path, report.Added));
+    Save("-removed", ".csv", path => WriteChangeCsv(path, report.Removed));
     var net = after.RootBytes - before.RootBytes;
-    var htmlPath = Path.Combine(outDir, $"disk-space-analysis-{stamp}-compare.html");
+    var htmlPath = Path.Combine(outDir, $"compare-disk-space-analysis-{stamp}.html");
     log.Info($"Net {net} bytes. Grew {report.Grew.Count}, shrunk {report.Shrunk.Count}, added {report.Added.Count}, removed {report.Removed.Count}.");
     log.Info("Wrote " + Path.GetFullPath(htmlPath) + ". Log " + Path.Combine(Path.GetFullPath(outDir), "disk-space-analysis.log"));
     return 0;
@@ -1016,8 +1016,8 @@ void PrintHelp()
           --event-log             Also write the start, errors, and the summary to the Windows Application log
           --quiet                 Hide console progress. The log file is still written
 
-        compare reads folders.csv or a scan JSON. Add --event-log on compare as well.
-        Open latest.json in the disk-space-analysis viewer, or double-click latest.html for the same screen offline.
+        Open latest-disk-space-analysis.json in the disk-space-analysis viewer, or double-click latest-disk-space-analysis.html for the same screen offline.
+        Compare reads a timestamped folders CSV, disk-space-analysis-yyyyMMdd-HHmmss-folders.csv.
         Each run appends disk-space-analysis.log in the report folder. The event source is disk-space-analysis.
         The first --event-log run must be elevated so Windows can register that source.
 

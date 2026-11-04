@@ -13,7 +13,7 @@ Repeat `--path` for each directory, or separate paths in one value with a semico
 
 `--allocated` reads real NTFS allocation, including compressed and sparse files. It is slower because every file is opened for attributes.
 
-`latest.html` is the same tabbed screen as the viewer, with the scan embedded, so it opens from disk with no network. Each age group in `latest.json` includes up to 40 of the largest files in that age. Click the age to list them. The same rows are in `latest-age-files.csv`. Each file type does the same. Click the type to list its largest files. Those rows are in `latest-extension-files.csv`.
+`latest-disk-space-analysis.html` is the same tabbed screen as the viewer, with the scan embedded, so it opens from disk with no network. Each age group in `latest-disk-space-analysis.json` includes up to 40 of the largest files in that age. Click the age to list them. The same rows are in `latest-disk-space-analysis-age-files.csv`. Each file type does the same. Click the type to list its largest files. Those rows are in `latest-extension-files.csv`.
 
 ## Build it yourself
 
